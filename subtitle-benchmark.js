@@ -4,10 +4,12 @@
   var running = false;
   window.PortageSubtitleBenchmark = function (context, event) {
     if (!event.data || event.data.type !== 'scope0Overlay' || running) return;
-    var video = document.querySelector('video');
     var shell = document.querySelector('cast-media-player');
-    if (!video && shell && shell.shadowRoot) video = shell.shadowRoot.querySelector('video');
-    if (!video) { context.sendCustomMessage(ns, event.senderId, {type:'scope0Result', error:'No video element'}); return; }
+    var candidates = [];
+    if (shell && shell.shadowRoot) candidates = candidates.concat([].slice.call(shell.shadowRoot.querySelectorAll('video')));
+    candidates = candidates.concat([].slice.call(document.querySelectorAll('video')));
+    var video = candidates.filter(function (v) { return v.readyState >= 1 && v.videoWidth > 0; })[0];
+    if (!video) { context.sendCustomMessage(ns, event.senderId, {type:'scope0Result', error:'No playing video element'}); return; }
     var imageURL = String(event.data.imageURL || '');
     if (!/^https?:\/\//.test(imageURL)) return;
     running = true;
