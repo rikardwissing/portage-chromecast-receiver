@@ -553,19 +553,36 @@ const Subs = {
   active: -1,
   shown: '',
   timer: null,
+  pictureOverlay: null,
   load(url, custom) {
     if (url !== this.key) { this.key = url; this.tracks = {}; }
     this.engineToType = {};
-    const list = Array.isArray(custom.subtitles) ? custom.subtitles : [];
+    const list = (Array.isArray(custom.subtitles) ? custom.subtitles : []).concat(custom.pictureSubtitles || []);
+    if (!this.pictureOverlay && window.PortageSubtitlePictures) {
+      this.pictureOverlay = new window.PortageSubtitlePictures({
+        video: () => {
+          const host = document.querySelector('cast-media-player');
+          const candidates = host && host.shadowRoot ? Array.from(host.shadowRoot.querySelectorAll('video')) : [];
+          return candidates.concat(Array.from(document.querySelectorAll('video'))).find(v => v.readyState >= 1 && v.videoWidth > 0) || null;
+        },
+        read: (url, kind) => fetch(url).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return kind === 'json' ? r.json() : r.blob(); }),
+        error: reason => tellSenders({ type: 'notice', reason })
+      });
+    }
+    const selected = typeof custom.pictureTypeIndex === 'number' ? custom.pictureTypeIndex :
+      (typeof custom.subtitleTypeIndex === 'number' ? custom.subtitleTypeIndex : -1);
+    if (this.pictureOverlay) this.pictureOverlay.load(list, selected);
     for (const sub of list) {
       const track = this.tracks[sub.typeIndex] ||
         (this.tracks[sub.typeIndex] = { cues: [], seen: {}, url: null, fetched: false });
       if (typeof sub.engineIndex === 'number') this.engineToType[sub.engineIndex] = sub.typeIndex;
       if (sub.url) track.url = sub.url;
+      if (sub.pictureBase) { track.pictureBase = sub.pictureBase; track.url = null; }
     }
-    this.select(typeof custom.subtitleTypeIndex === 'number' ? custom.subtitleTypeIndex : -1);
+    this.select(selected);
   },
   clear() {
+    if (this.pictureOverlay) this.pictureOverlay.clear();
     this.key = null;
     this.tracks = {};
     this.engineToType = {};
@@ -582,9 +599,13 @@ const Subs = {
   },
   select(typeIndex) {
     this.active = typeIndex;
-    if (lastLoad && lastLoad.url === this.key && lastLoad.custom) lastLoad.custom.subtitleTypeIndex = typeIndex;
+    if (this.pictureOverlay) this.pictureOverlay.select(typeIndex);
+    if (lastLoad && lastLoad.url === this.key && lastLoad.custom) {
+      lastLoad.custom.subtitleTypeIndex = typeIndex;
+      delete lastLoad.custom.pictureTypeIndex;
+    }
     const track = this.tracks[typeIndex];
-    if (track && track.url && !track.fetched) {
+    if (track && !track.pictureBase && track.url && !track.fetched) {
       track.fetched = true;
       fetch(track.url)
         .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
@@ -601,7 +622,7 @@ const Subs = {
   },
   tick() {
     const track = this.tracks[this.active];
-    if (!track) { this.paint(''); return; }
+    if (!track || track.pictureBase) { this.paint(''); return; }
     const now = playerManager.getCurrentTimeSec() || 0;
     const lines = [];
     for (const cue of track.cues) if (cue.s <= now && now < cue.e) lines.push(cue.text);
@@ -829,6 +850,12 @@ if (!PREVIEW) {
   function playbackStats() {
     const stats = { type: 'stats', engine: loadPlayer, version: receiverVersion(),
                     maxDisplayHeight: maxDisplayHeight(), hevc: canDisplay('video/mp4', 'hvc1.2.4.L120.90') };
+    if (Subs.pictureOverlay) {
+      const overlay = Subs.pictureOverlay;
+      stats.subtitlePictures = { track: overlay.active, visible: overlay.box.style.display !== 'none',
+        images: overlay.box.querySelectorAll('img').length, text: overlay.box.querySelectorAll('span').length,
+        cached: Object.keys(overlay.images).length, bytes: overlay.bytes, failures: overlay.failures };
+    }
     let caf = null;
     try { caf = typeof playerManager.getStats === 'function' ? playerManager.getStats() : null; } catch (e) {}
     if (caf) {
@@ -1036,7 +1063,7 @@ if (!PREVIEW) {
       Playing.contentId = media.contentId || media.contentUrl || null;
       Playing.title = (media.metadata && media.metadata.title) || null;
     }
-    if (Array.isArray(custom.subtitles)) Subs.load(media.contentUrl || media.contentId || '', custom);
+    if (Array.isArray(custom.subtitles) || Array.isArray(custom.pictureSubtitles)) Subs.load(media.contentUrl || media.contentId || '', custom);
     else Subs.clear();
     // A Plex HLS stream's segments are fMP4 (measured: ftyp iso5/dby1 brands,
     // sidx-opening) but NAMED ".ts", and the manifest declares no CODECS - so
