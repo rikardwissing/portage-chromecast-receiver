@@ -533,17 +533,7 @@ function vttSeconds(stamp) {
 }
 
 function parseVtt(text) {
-  const cues = [];
-  for (const block of String(text).replace(/\r/g, '').split(/\n{2,}/)) {
-    const lines = block.split('\n');
-    const at = lines.findIndex((line) => line.indexOf('-->') >= 0);
-    if (at < 0) continue;
-    const m = lines[at].match(/([\d:.,]+)\s*-->\s*([\d:.,]+)/);
-    if (!m) continue;
-    const body = Subs.clean(lines.slice(at + 1).join('\n'));
-    if (body) cues.push({ s: vttSeconds(m[1]), e: vttSeconds(m[2]), text: body });
-  }
-  return cues;
+  return window.PortageSubtitleText.parse(text);
 }
 
 const Subs = {
@@ -554,10 +544,18 @@ const Subs = {
   shown: '',
   timer: null,
   pictureOverlay: null,
+  textOverlay: null,
   load(url, custom) {
     if (url !== this.key) { this.key = url; this.tracks = {}; }
     this.engineToType = {};
     const list = (Array.isArray(custom.subtitles) ? custom.subtitles : []).concat(custom.pictureSubtitles || []);
+    if (!this.textOverlay) this.textOverlay = new window.PortageSubtitleText.Layer({
+      video: () => {
+        const host = document.querySelector('cast-media-player');
+        const candidates = host && host.shadowRoot ? Array.from(host.shadowRoot.querySelectorAll('video')) : [];
+        return candidates.concat(Array.from(document.querySelectorAll('video'))).find(v => v.readyState >= 1 && v.videoWidth > 0) || null;
+      }
+    });
     if (!this.pictureOverlay && window.PortageSubtitlePictures) {
       this.pictureOverlay = new window.PortageSubtitlePictures({
         video: () => {
@@ -594,7 +592,7 @@ const Subs = {
     const seenKey = Math.round(startMs) + '|' + text;
     if (track.seen[seenKey]) return;
     track.seen[seenKey] = 1;
-    const body = this.clean(text);
+    const body = String(text);
     if (body) track.cues.push({ s: startMs / 1000, e: endMs / 1000, text: body });
   },
   select(typeIndex) {
@@ -624,11 +622,10 @@ const Subs = {
     const track = this.tracks[this.active];
     if (!track || track.pictureBase) { this.paint(''); return; }
     const now = playerManager.getCurrentTimeSec() || 0;
-    const lines = [];
-    for (const cue of track.cues) if (cue.s <= now && now < cue.e) lines.push(cue.text);
-    this.paint(lines.join('\n'));
+    if (this.textOverlay) this.textOverlay.set(track.cues.filter(cue => cue.s <= now && now < cue.e));
   },
   paint(text) {
+    if (this.textOverlay) this.textOverlay.set(text ? [{text}] : null);
     if (text === this.shown) return;
     this.shown = text;
     const box = document.getElementById('subs');
@@ -856,6 +853,12 @@ if (!PREVIEW) {
         images: overlay.box.querySelectorAll('img').length, text: overlay.box.querySelectorAll('span').length,
         cached: Object.keys(overlay.images).length, bytes: overlay.bytes, failures: overlay.failures };
     }
+    if (Subs.textOverlay) {
+      const box = Subs.textOverlay.box;
+      stats.subtitleText = { visible: box.style.display !== 'none',
+        cues: Array.from(box.children).map(cue => ({ left: cue.style.left, top: cue.style.top,
+          italic: !!cue.querySelector('i'), bold: !!cue.querySelector('b'), underline: !!cue.querySelector('u') })) };
+    }
     let caf = null;
     try { caf = typeof playerManager.getStats === 'function' ? playerManager.getStats() : null; } catch (e) {}
     if (caf) {
@@ -1063,8 +1066,8 @@ if (!PREVIEW) {
       Playing.contentId = media.contentId || media.contentUrl || null;
       Playing.title = (media.metadata && media.metadata.title) || null;
     }
-    if (Array.isArray(custom.subtitles) || Array.isArray(custom.pictureSubtitles)) Subs.load(media.contentUrl || media.contentId || '', custom);
-    else Subs.clear();
+    if (!Array.isArray(custom.subtitles) && !Array.isArray(custom.pictureSubtitles)) Subs.clear();
+    Subs.load(media.contentUrl || media.contentId || '', custom);
     // A Plex HLS stream's segments are fMP4 (measured: ftyp iso5/dby1 brands,
     // sidx-opening) but NAMED ".ts", and the manifest declares no CODECS - so
     // Shaka guesses MPEG-TS from the extension and pushes fMP4 bytes through
