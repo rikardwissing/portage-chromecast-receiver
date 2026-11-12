@@ -910,6 +910,7 @@ if (!PREVIEW) {
       stats.paused = element.paused;
       stats.seeking = element.seeking;
       stats.readyState = element.readyState;
+      stats.playbackRate = element.playbackRate;
       stats.mediaRanges = diagnosticRanges(element.buffered);
       stats.audioBytes = element.webkitAudioDecodedByteCount;
       try {
@@ -917,7 +918,7 @@ if (!PREVIEW) {
         const buffers = diagnosticMediaSource && diagnosticMediaSource.sourceBuffers;
         for (let i = 0; buffers && i < buffers.length; i++) {
           stats.sourceBuffers.push({mime: diagnosticBufferTypes.get(buffers[i]),
-            ranges: diagnosticRanges(buffers[i].buffered), updating: buffers[i].updating,
+            ranges: diagnosticRanges(buffers[i].buffered), updating: buffers[i].updating, mode: buffers[i].mode,
             timestampOffset: buffers[i].timestampOffset});
         }
       } catch (e) {}
@@ -1199,6 +1200,12 @@ if (!PREVIEW) {
           retryParameters: { maxAttempts: 8, baseDelay: 1000, backoffFactor: 1.3, fuzzFactor: 0.5, timeout: 30000 },
         },
       };
+      if (isMadeStream && custom.qaShortBuffer === true) {
+        playbackConfig.autoResumeDuration = 1;
+        playbackConfig.autoResumeNumberOfSegments = 1;
+        playbackConfig.shakaConfig.streaming.rebufferingGoal = 1;
+        playbackConfig.shakaConfig.streaming.bufferingGoal = 20;
+      }
       playbackConfig.segmentRequestRetryLimit = 8;
       slog('plex stream load: shaka' + (dolby ? ' + fmp4-split' : '') +
            (codecsAttr ? (', CODECS="' + codecsAttr + '"') : ', codecs from init'));
