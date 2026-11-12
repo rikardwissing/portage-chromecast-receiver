@@ -75,7 +75,3 @@ vm.createContext(sizeContext);
 vm.runInContext(source.slice(source.indexOf('function canDisplaySize('), source.indexOf('const DISPLAY_SIZES')), sizeContext);
 assert.equal(sizeContext.canDisplaySize(['avc1.640028'], 1920, 1080), true);
 assert.equal(sizeQueries[0][4], 30, 'explicit 30fps answer bounds sender copy approval');
-
-result = load(local, { madeStream: true, streamContainer: 'mp4', streamCodecs: 'avc1.640028,flac' });
-assert.equal(result.window.__dolbySplitActive, true);
-assert.equal(result.config.shakaConfig.mediaSource.forceTransmux, true);

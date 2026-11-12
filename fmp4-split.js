@@ -27,7 +27,7 @@
 
   const VIDEO_CODEC = /^(avc1|avc3|hvc1|hev1|vp9|av01)/i;
   const declined = {};
-  const DOLBY_CODEC = /^(ec-3|ac-3|flac)/i;
+  const DOLBY_CODEC = /^(ec-3|ac-3)/i;
 
   function codecList(mimeType) {
     const m = /codecs="([^"]*)"/i.exec(String(mimeType || ''));

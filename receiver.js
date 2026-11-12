@@ -1092,7 +1092,7 @@ if (!PREVIEW) {
     wantStreamSubtitle = custom.subtitleActive === true;
     wantStreamSubtitleLanguage = typeof custom.subtitleLanguage === 'string' ? custom.subtitleLanguage : null;
     const dolbyStream = usesStreamPlayer && streamCodecs &&
-      /(^|,)\s*(ec-3|ac-3|flac|fLaC)\s*($|,)/.test(streamCodecs);
+      /(^|,)\s*(ec-3|ac-3)\s*($|,)/.test(streamCodecs);
     const container = (typeof custom.streamContainer === 'string')
       ? custom.streamContainer : null;
     if (usesStreamPlayer) {
@@ -1107,7 +1107,7 @@ if (!PREVIEW) {
       // muxed payload needs extraction too); only these loads set it.
       // The rename and CODECS are the same measured requirements as always:
       // Plex names fMP4 ".ts" and declares no codecs.
-      const dolby = streamCodecs && /(^|,)\s*(ec-3|ac-3|flac|fLaC)\s*($|,)/.test(streamCodecs);
+      const dolby = streamCodecs && /(^|,)\s*(ec-3|ac-3)\s*($|,)/.test(streamCodecs);
       window.__fmp4SplitLog = slog;
       if (window.__fmp4SplitRegister) window.__fmp4SplitRegister();
       // Shaka 4.16 splits muxed content NATIVELY (needSplitMuxedContent_,
