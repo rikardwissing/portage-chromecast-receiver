@@ -1193,7 +1193,9 @@ if (!PREVIEW) {
       };
       playbackConfig.shakaConfig = {
         mediaSource: { forceTransmux: !!dolby },
-        manifest: { hls: { disableCodecGuessing: !streamCodecs } },
+        manifest: { hls: Object.assign({ disableCodecGuessing: !streamCodecs }, isMadeStream ? {
+          sequenceMode: false, ignoreManifestTimestampsInSegmentsMode: true,
+        } : {}) },
         streaming: {
           ignoreTextStreamFailures: true,
           retryParameters: { maxAttempts: 8, baseDelay: 1000, backoffFactor: 1.3, fuzzFactor: 0.5, timeout: 30000 },
