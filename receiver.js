@@ -1357,17 +1357,6 @@ if (!PREVIEW) {
     if (msg.type === 'ping') {
       context.sendCustomMessage(NS, event.senderId,
                                 { type: 'pong', capabilities: capabilities() });
-    } else if (msg.type === 'qaJassubProbe') {
-      const probe = window.PortageJassubProbe;
-      if (typeof probe !== 'function') {
-        context.sendCustomMessage(NS, event.senderId, { type: 'qaJassubProbeResult', result: { ok: false, error: 'probe script unavailable' } });
-        return;
-      }
-      probe().then((result) => {
-        context.sendCustomMessage(NS, event.senderId, { type: 'qaJassubProbeResult', result });
-      }, (error) => {
-        context.sendCustomMessage(NS, event.senderId, { type: 'qaJassubProbeResult', result: { ok: false, error: String(error) } });
-      });
     } else if (msg.type === 'scope0Overlay' && window.PortageSubtitleBenchmark) {
       window.PortageSubtitleBenchmark(context, event);
     } else if (msg.type === 'canPlay') {
