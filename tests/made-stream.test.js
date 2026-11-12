@@ -32,9 +32,14 @@ assert.equal(request.url, 'http://192.168.1.2:8100/video-0.m4s');
 result = load(local, { madeStream: true, streamContainer: 'mp4', streamCodecs: 'avc1.640028,mp4a.40.2' });
 assert.equal(result.window.__dolbySplitActive, false);
 assert.equal(result.config.shakaConfig.mediaSource.forceTransmux, false);
+assert.equal(result.config.autoResumeDuration, 1);
+assert.equal(result.config.shakaConfig.streaming.rebufferingGoal, 1);
+assert.equal(result.config.shakaConfig.streaming.bufferingGoal, 20);
 // Existing server-built streams retain their rename/auth and Dolby paths.
 result = load('http://plex/transcode/universal/start.m3u8?X-Plex-Token=abc', { streamCodecs: 'avc1.640028,ec-3' });
 assert.equal(result.window.__dolbySplitActive, true);
+assert.equal(result.config.autoResumeDuration, undefined);
+assert.equal(result.config.shakaConfig.streaming.rebufferingGoal, undefined);
 assert.match(result.config.manifestHandler('#EXTM3U\nvideo.ts\n'), /video.ts.m4s/);
 request = { url: 'http://plex/transcode/universal/video.ts.m4s' };
 result.config.segmentRequestHandler(request);

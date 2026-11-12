@@ -1200,9 +1200,8 @@ if (!PREVIEW) {
           retryParameters: { maxAttempts: 8, baseDelay: 1000, backoffFactor: 1.3, fuzzFactor: 0.5, timeout: 30000 },
         },
       };
-      if (isMadeStream && custom.qaShortBuffer === true) {
+      if (isMadeStream) {
         playbackConfig.autoResumeDuration = 1;
-        playbackConfig.autoResumeNumberOfSegments = 1;
         playbackConfig.shakaConfig.streaming.rebufferingGoal = 1;
         playbackConfig.shakaConfig.streaming.bufferingGoal = 20;
       }
