@@ -12,3 +12,5 @@ throughput 1.0.2 — MIT
 This temporary QA bundle uses JASSUB 2.5.37 dist files and locally bundles its JavaScript dependencies with esbuild 0.25.12. No runtime CDN dependencies are used.
 
 The worker bundle adds one temporary QA-only field (`rendererBackend`) containing the selected JASSUB renderer class name so the probe can distinguish WebGL2, WebGL1, and Canvas2D on device.
+
+The worker bundle also exposes `captureSummary(time)` for this test only; it hashes the renderer's actual 1080p output pixels at selected times to check that animated frames differ.

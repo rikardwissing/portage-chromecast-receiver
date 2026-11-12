@@ -1919,6 +1919,25 @@ var ASSRenderer = class {
     ctx.drawImage(canvas, 0, 0);
     return { data: ctx.getImageData(0, 0, width, height).data, width, height };
   }
+  captureSummary(time) {
+    const frame = this._drawCapture(time);
+    if (!frame)
+      return null;
+    let checksum = 2166136261;
+    let nonDarkPixels = 0;
+    for (let i = 0; i < frame.data.length; i += 4) {
+      const r = frame.data[i];
+      const g = frame.data[i + 1];
+      const b = frame.data[i + 2];
+      if (r > 12 || g > 12 || b > 12)
+        nonDarkPixels++;
+      checksum = Math.imul(checksum ^ r, 16777619);
+      checksum = Math.imul(checksum ^ g, 16777619);
+      checksum = Math.imul(checksum ^ b, 16777619);
+      checksum = Math.imul(checksum ^ frame.data[i + 3], 16777619);
+    }
+    return { width: frame.width, height: frame.height, nonDarkPixels, checksum: (checksum >>> 0).toString(16) };
+  }
   _setColorSpace(matrix, fullRange) {
     this._videoColorSpace = matrix && matrix !== "rgb" ? `${WEB_MATRIX_COEFFICIENTS[matrix]} ${fullRange ? "PC" : "TV"}` : void 0;
     this._checkColorSpace();
