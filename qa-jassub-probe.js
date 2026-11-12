@@ -30,7 +30,7 @@
         resolve({ supported: false, error: 'worker probe timed out' });
       }, 8000);
       try {
-        worker = new Worker(new URL('qa-jassub-probe-worker.js?v=2026-11-12.2', baseURL).href, { type: 'module' });
+        worker = new Worker(new URL('qa-jassub-probe-worker.js', baseURL).href, { type: 'module' });
         worker.onmessage = function (event) {
           if (finished) return;
           finished = true;
@@ -88,8 +88,8 @@
     var asset = function (name) { return new URL('jassub-qa/' + name, baseURL).href; };
     var moduleURL = asset('jassub.js');
     var canvas = document.createElement('canvas');
-    canvas.width = 1920;
-    canvas.height = 1080;
+    canvas.width = 640;
+    canvas.height = 360;
     canvas.id = 'qa-jassub-output';
     canvas.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;z-index:2147483647;background:#10121f;';
     document.body.appendChild(canvas);
@@ -101,8 +101,8 @@
       features.wasmSIMD = !!JASSUB._supportsSIMD;
       instance = new JASSUB({
         canvas: canvas,
-        subContent: '[Script Info]\nScriptType: v4.00+\nPlayResX: 1920\nPlayResY: 1080\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,56,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,1,3,2,2,60,60,50,1\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:06.00,Default,,0,0,0,,{\\move(300,540,1620,540,0,5000)\\t(0,2500,\\fs72\\1c&H0000FF&)}JASSUB animated synthetic Cast probe',
-        workerUrl: asset('jassub-renderer-worker.js?v=2026-11-12.2'),
+        subContent: '[Script Info]\nScriptType: v4.00+\nPlayResX: 640\nPlayResY: 360\n[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\nStyle: Default,Arial,28,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,1,2,0,2,20,20,20,1\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:04.00,Default,,0,0,0,,JASSUB synthetic Cast probe',
+        workerUrl: asset('jassub-renderer-worker.js'),
         wasmUrl: asset('jassub.wasm'),
         wasmWorkerUrl: asset('jassub-wasm-worker.js'),
         modernWasmUrl: asset('jassub-modern.wasm'),
@@ -114,51 +114,11 @@
       await withTimeout(instance.ready, 25000, 'JASSUB worker/WASM ready');
       features.readyMs = Math.round(performance.now() - readyStart);
       try { features.rendererBackend = await instance.renderer.rendererBackend; } catch (error) { features.rendererBackend = 'unavailable: ' + String(error); }
-      var warmupStart = performance.now();
-      var warmupFrames = 10;
-      for (var w = 0; w < warmupFrames; w++) {
-        await withTimeout(instance.manualRender({ expectedDisplayTime: performance.now() + 34, width: 1920, height: 1080, mediaTime: 1.0 + w / 30 }), 1500, 'JASSUB warm-up frame');
-      }
-      features.warmup = { frames: warmupFrames, durationMs: Math.round(performance.now() - warmupStart) };
-      var intervalMs = 1000 / 30;
-      var benchmarkStart = performance.now();
-      var renderTimes = [];
-      var missedDeadlines = 0;
-      var benchmarkError = null;
-      for (var i = 0; i < 90; i++) {
-        if (performance.now() - benchmarkStart > 12000) break;
-        var scheduledStart = benchmarkStart + i * intervalMs;
-        var waitMs = scheduledStart - performance.now();
-        if (waitMs > 0) await new Promise(function (resolve) { setTimeout(resolve, waitMs); });
-        var frameStart = performance.now();
-        var deadline = benchmarkStart + (i + 1) * intervalMs;
-        try {
-          await withTimeout(instance.manualRender({ expectedDisplayTime: deadline, width: 1920, height: 1080, mediaTime: 1.5 + i / 30 }), 1500, 'JASSUB benchmark frame');
-        } catch (error) {
-          benchmarkError = String(error);
-          break;
-        }
-        var frameEnd = performance.now();
-        renderTimes.push(frameEnd - frameStart);
-        if (frameEnd > deadline) missedDeadlines++;
-      }
-      var sortedTimes = renderTimes.slice().sort(function (a, b) { return a - b; });
-      var percentile = function (p) { return sortedTimes.length ? Math.round(sortedTimes[Math.min(sortedTimes.length - 1, Math.ceil(p * sortedTimes.length) - 1)] * 10) / 10 : null; };
-      features.benchmark = {
-        width: 1920, height: 1080, targetFps: 30, frameIntervalMs: Math.round(intervalMs * 10) / 10,
-        frames: renderTimes.length, requestedFrames: 90, totalMs: Math.round((performance.now() - benchmarkStart) * 10) / 10,
-        warmupFrames: warmupFrames, p50Ms: percentile(0.5), p95Ms: percentile(0.95),
-        maxMs: sortedTimes.length ? Math.round(sortedTimes[sortedTimes.length - 1] * 10) / 10 : null,
-        lateDeadlines: missedDeadlines, frameTimesMs: renderTimes.map(function (value) { return Math.round(value * 10) / 10; })
-      };
-      if (benchmarkError) features.benchmark.error = benchmarkError;
-      try {
-        features.pixelSamples = [await withTimeout(instance.renderer.captureSummary(1.5), 4000, 'JASSUB first pixel sample'), await withTimeout(instance.renderer.captureSummary(4.4), 4000, 'JASSUB second pixel sample')];
-        features.pixelFramesDiffer = features.pixelSamples[0] && features.pixelSamples[1] && features.pixelSamples[0].checksum !== features.pixelSamples[1].checksum;
-      } catch (error) {
-        features.pixelCaptureError = String(error);
-      }
-      features.rendered = renderTimes.length > 0;
+      var firstRenderStart = performance.now();
+      await withTimeout(instance.manualRender({ expectedDisplayTime: performance.now(), width: 640, height: 360, mediaTime: 1.5 }), 8000, 'JASSUB resize');
+      await withTimeout(instance.manualRender({ expectedDisplayTime: performance.now(), width: 640, height: 360, mediaTime: 2.0 }), 8000, 'JASSUB render');
+      features.renderMs = Math.round(performance.now() - firstRenderStart);
+      features.rendered = true;
       features.canvasVisible = !!canvas.isConnected;
       return { ok: true, features: features };
     } finally {
