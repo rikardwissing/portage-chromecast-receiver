@@ -16,6 +16,23 @@
 const NS = 'urn:x-cast:dev.rikard.portage';
 const PREVIEW = new URLSearchParams(location.search).get('preview');
 
+let diagnosticMediaSource = null;
+const diagnosticBufferTypes = new WeakMap();
+if (window.MediaSource) {
+  const originalAddSourceBuffer = MediaSource.prototype.addSourceBuffer;
+  MediaSource.prototype.addSourceBuffer = function (mime) {
+    const buffer = originalAddSourceBuffer.call(this, mime);
+    diagnosticMediaSource = this;
+    diagnosticBufferTypes.set(buffer, mime);
+    return buffer;
+  };
+}
+function diagnosticRanges(ranges) {
+  const result = [];
+  for (let i = 0; i < ranges.length; i++) result.push([ranges.start(i), ranges.end(i)]);
+  return result;
+}
+
 let context = null;
 let playerManager = null;
 if (!PREVIEW) {
@@ -889,6 +906,21 @@ if (!PREVIEW) {
         stats.droppedFrames = quality.droppedVideoFrames;
         stats.totalFrames = quality.totalVideoFrames;
       }
+      stats.playhead = element.currentTime;
+      stats.paused = element.paused;
+      stats.seeking = element.seeking;
+      stats.readyState = element.readyState;
+      stats.mediaRanges = diagnosticRanges(element.buffered);
+      stats.audioBytes = element.webkitAudioDecodedByteCount;
+      try {
+        stats.sourceBuffers = [];
+        const buffers = diagnosticMediaSource && diagnosticMediaSource.sourceBuffers;
+        for (let i = 0; buffers && i < buffers.length; i++) {
+          stats.sourceBuffers.push({mime: diagnosticBufferTypes.get(buffers[i]),
+            ranges: diagnosticRanges(buffers[i].buffered), updating: buffers[i].updating,
+            timestampOffset: buffers[i].timestampOffset});
+        }
+      } catch (e) {}
       const now = element.currentTime;
       for (let i = 0; i < element.buffered.length; i++) {
         if (element.buffered.start(i) <= now + 0.5 && element.buffered.end(i) >= now) {
