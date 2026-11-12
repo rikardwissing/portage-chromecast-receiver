@@ -1392,6 +1392,14 @@ if (!PREVIEW) {
 
   context.addCustomMessageListener(NS, (event) => {
     const msg = event.data || {};
+    if (msg.type === 'qaAssPerformance' && window.PortageAssPerformance) {
+      window.PortageAssPerformance(msg.config, result => context.sendCustomMessage(NS, event.senderId,
+        { type: 'qaAssPerformanceProgress', result })).then(result => {
+        context.sendCustomMessage(NS, event.senderId, { type: 'qaAssPerformanceResult', result });
+      }).catch(error => context.sendCustomMessage(NS, event.senderId,
+        { type: 'qaAssPerformanceResult', result: { error: String(error), stack: error.stack } }));
+      return;
+    }
     if (msg.type === 'ping') {
       context.sendCustomMessage(NS, event.senderId,
                                 { type: 'pong', capabilities: capabilities() });
