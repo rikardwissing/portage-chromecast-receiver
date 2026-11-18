@@ -768,6 +768,19 @@ function reissue({ audioTypeIndex, withEngine = true }) {
   playerManager.load(request);
 }
 
+if (window.MediaSource && MediaSource.prototype.addSourceBuffer && !MediaSource.prototype.__portageWatched) {
+  const addSourceBuffer = MediaSource.prototype.addSourceBuffer;
+  MediaSource.prototype.addSourceBuffer = function (type) {
+    const buffer = addSourceBuffer.apply(this, arguments);
+    window.__sourceBuffers = (window.__sourceBuffers || []).filter((entry) => {
+      try { return entry.source.readyState !== 'closed'; } catch (err) { return false; }
+    });
+    window.__sourceBuffers.push({ kind: /^video/i.test(String(type)) ? 'video' : 'audio', buffer, source: this });
+    return buffer;
+  };
+  MediaSource.prototype.__portageWatched = true;
+}
+
 // ---------------------------------------------------------------- CAF wiring
 
 if (!PREVIEW) {
@@ -797,6 +810,24 @@ if (!PREVIEW) {
     loadEyes.count++;
     slog(line);
   }
+  function rangesText(ranges) {
+    const parts = [];
+    for (let i = 0; ranges && i < ranges.length && i < 4; i++) parts.push(ranges.start(i).toFixed(2) + '-' + ranges.end(i).toFixed(2));
+    return parts.join(',') || 'none';
+  }
+  function bufferedText() {
+    const element = mediaElement();
+    let text = 'at ' + (element ? element.currentTime.toFixed(3) : '?');
+    (window.__sourceBuffers || []).forEach((entry) => {
+      try {
+        text += ' ' + entry.kind + ' [' + rangesText(entry.buffer.buffered) + '] offset ' + entry.buffer.timestampOffset.toFixed(3);
+      } catch (err) {}
+    });
+    return text;
+  }
+  [events.EventType.SEEKING, events.EventType.SEEKED, events.EventType.WAITING].filter(Boolean).forEach((type) => {
+    playerManager.addEventListener(type, () => slog('sync: ' + type + ' ' + bufferedText()));
+  });
   playerManager.addEventListener(events.category.CORE, slogEvent);
   playerManager.addEventListener(events.category.DEBUG, slogEvent);
   playerManager.addEventListener(events.EventType.PLAYING, () => {
