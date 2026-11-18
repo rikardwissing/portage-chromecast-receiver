@@ -820,7 +820,7 @@ if (!PREVIEW) {
     let text = 'at ' + (element ? element.currentTime.toFixed(3) : '?');
     (window.__sourceBuffers || []).forEach((entry) => {
       try {
-        text += ' ' + entry.kind + ' [' + rangesText(entry.buffer.buffered) + '] offset ' + entry.buffer.timestampOffset.toFixed(3);
+        text += ' ' + entry.kind + ' ' + entry.buffer.mode + ' [' + rangesText(entry.buffer.buffered) + '] offset ' + entry.buffer.timestampOffset.toFixed(3);
       } catch (err) {}
     });
     return text;
@@ -1232,6 +1232,8 @@ if (!PREVIEW) {
         },
       };
       if (isMadeStream) {
+        // Our segments carry exact times; sequence mode re-times each append and slipped one track a segment behind.
+        playbackConfig.shakaConfig.manifest.hls.sequenceMode = false;
         playbackConfig.autoResumeDuration = 1;
         playbackConfig.shakaConfig.streaming.rebufferingGoal = 1;
         playbackConfig.shakaConfig.streaming.bufferingGoal = 20;
