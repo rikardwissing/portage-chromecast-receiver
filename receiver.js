@@ -1196,6 +1196,8 @@ if (!PREVIEW) {
         mediaSource: { forceTransmux: !!dolby },
         manifest: { hls: { disableCodecGuessing: !streamCodecs } },
         streaming: {
+          // A TV's media buffer holds only so many bytes; 30 s of played 40 Mbit/s picture overflowed it (Shaka 3017).
+          bufferBehind: 10,
           ignoreTextStreamFailures: true,
           retryParameters: { maxAttempts: 8, baseDelay: 1000, backoffFactor: 1.3, fuzzFactor: 0.5, timeout: 30000 },
         },
