@@ -1232,8 +1232,8 @@ if (!PREVIEW) {
         },
       };
       if (isMadeStream) {
-        // Our segments carry exact times; sequence mode re-times each append and slipped one track a segment behind.
-        playbackConfig.shakaConfig.manifest.hls.sequenceMode = false;
+        // A copied picture's segments carry exact times; sequence mode slipped one track a segment behind on them.
+        if (custom.copiedPicture === true) playbackConfig.shakaConfig.manifest.hls.sequenceMode = false;
         playbackConfig.autoResumeDuration = 1;
         playbackConfig.shakaConfig.streaming.rebufferingGoal = 1;
         playbackConfig.shakaConfig.streaming.bufferingGoal = 20;

@@ -35,7 +35,9 @@ assert.equal(result.config.shakaConfig.mediaSource.forceTransmux, false);
 assert.equal(result.config.autoResumeDuration, 1);
 assert.equal(result.config.shakaConfig.streaming.rebufferingGoal, 1);
 assert.equal(result.config.shakaConfig.streaming.bufferingGoal, 20);
-assert.equal(result.config.shakaConfig.manifest.hls.sequenceMode, false, 'made segments are placed by their own times');
+assert.equal(result.config.shakaConfig.manifest.hls.sequenceMode, undefined, 'a made picture keeps sequence mode');
+result = load(local, { madeStream: true, copiedPicture: true, streamContainer: 'mp4', streamCodecs: 'avc1.640028,mp4a.40.2' });
+assert.equal(result.config.shakaConfig.manifest.hls.sequenceMode, false, 'a copied picture is placed by its own times');
 // Existing server-built streams retain their rename/auth and Dolby paths.
 result = load('http://plex/transcode/universal/start.m3u8?X-Plex-Token=abc', { streamCodecs: 'avc1.640028,ec-3' });
 assert.equal(result.window.__dolbySplitActive, true);
