@@ -1,5 +1,5 @@
 diff --git a/lib/media/media_source_engine.js b/lib/media/media_source_engine.js
-index 3ec9275..6b5d734 100644
+index 3ec9275..2ce89b8 100644
 --- a/lib/media/media_source_engine.js
 +++ b/lib/media/media_source_engine.js
 @@ -11,10 +11,11 @@ goog.require('shaka.log');
@@ -14,7 +14,7 @@ index 3ec9275..6b5d734 100644
  goog.require('shaka.media.TimeRangesUtils');
  goog.require('shaka.text.TextEngine');
  goog.require('shaka.transmuxer.TransmuxerEngine');
-@@ -108,10 +109,16 @@ shaka.media.MediaSourceEngine = class {
+@@ -108,10 +109,29 @@ shaka.media.MediaSourceEngine = class {
      this.queues_ = new Map();
  
      /** @private {shaka.util.EventManager} */
@@ -23,7 +23,20 @@ index 3ec9275..6b5d734 100644
 +    /** @private {!shaka.media.AppendBudget} */
 +    this.appendBudget_ = new shaka.media.AppendBudget(video);
 +    if (video) {
-+      this.eventManager_.listen(video, 'seeking', () => this.appendBudget_.cancel());
++      this.eventManager_.listen(video, 'seeking', () => {
++        // Buffered seeks (including the player's own gap hops) do not need
++        // different media. Aborting a partial MP4 append there forces a
++        // segment replay and can create another gap. Unbuffered seeks must
++        // still wake quota waits so StreamingEngine can clear/reposition.
++        const at = video.currentTime;
++        for (let i = 0; i < video.buffered.length; i++) {
++          if (at >= video.buffered.start(i) - 0.001 &&
++              at < video.buffered.end(i)) {
++            return;
++          }
++        }
++        this.appendBudget_.cancel();
++      });
 +    }
 +
      /**
@@ -31,7 +44,7 @@ index 3ec9275..6b5d734 100644
                           !shaka.extern.Transmuxer>} */
      this.transmuxers_ = new Map();
  
-@@ -410,10 +417,11 @@ shaka.media.MediaSourceEngine = class {
+@@ -410,10 +430,11 @@ shaka.media.MediaSourceEngine = class {
      return this.destroyer_.destroy();
    }
  
@@ -43,7 +56,7 @@ index 3ec9275..6b5d734 100644
      const cleanup = [];
  
      for (const [key, q] of this.queues_) {
-@@ -1188,16 +1196,18 @@ shaka.media.MediaSourceEngine = class {
+@@ -1188,16 +1209,18 @@ shaka.media.MediaSourceEngine = class {
     *   variant(s).
     * @param {boolean=} isChunkedData True if we add to the buffer from the
     *   partial read of the segment.
@@ -63,7 +76,7 @@ index 3ec9275..6b5d734 100644
      if (contentType == ContentType.TEXT) {
        if (this.manifestType_ == shaka.media.ManifestParser.HLS) {
          // This won't be known until the first video segment is appended.
-@@ -1213,14 +1223,15 @@ shaka.media.MediaSourceEngine = class {
+@@ -1213,14 +1236,15 @@ shaka.media.MediaSourceEngine = class {
      }
  
      if (!fromSplit && this.needSplitMuxedContent_) {
@@ -81,7 +94,7 @@ index 3ec9275..6b5d734 100644
  
      if (!this.sourceBuffers_.has(contentType)) {
        shaka.log.warning('Attempted to restore a non-existent source buffer');
-@@ -1389,16 +1400,30 @@ shaka.media.MediaSourceEngine = class {
+@@ -1389,16 +1413,30 @@ shaka.media.MediaSourceEngine = class {
        }
      }
  
@@ -117,19 +130,20 @@ index 3ec9275..6b5d734 100644
        const bufferedAfter = this.getBuffered_(contentType);
        const newBuffered = shaka.media.TimeRangesUtils.computeAddedRange(
            bufferedBefore, bufferedAfter);
-@@ -1481,10 +1506,11 @@ shaka.media.MediaSourceEngine = class {
-    *
+@@ -1482,10 +1520,12 @@ shaka.media.MediaSourceEngine = class {
     * @param {shaka.util.ManifestParserUtils.ContentType} contentType
     * @return {!Promise}
     */
    async clear(contentType) {
-+    this.appendBudget_.cancel();
      const ContentType = shaka.util.ManifestParserUtils.ContentType;
++    // Clearing subtitles must not invalidate an unrelated A/V append.
++    if (contentType != ContentType.TEXT) this.appendBudget_.cancel();
      if (contentType == ContentType.TEXT) {
        if (!this.textEngine_) {
          return;
        }
-@@ -2151,11 +2177,13 @@ shaka.media.MediaSourceEngine = class {
+       await this.textEngine_.remove(0, Infinity);
+@@ -2151,11 +2191,13 @@ shaka.media.MediaSourceEngine = class {
      const next = this.queues_.get(contentType)[0];
      if (next) {
        try {
@@ -144,7 +158,7 @@ index 3ec9275..6b5d734 100644
                shaka.util.Error.Category.MEDIA,
                shaka.util.Error.Code.QUOTA_EXCEEDED_ERROR,
                contentType));
-@@ -2338,10 +2366,11 @@ shaka.media.MediaSourceEngine = class {
+@@ -2338,10 +2380,11 @@ shaka.media.MediaSourceEngine = class {
    async reset_(streamsByType) {
      if (this.reloadingMediaSource_ || this.usingRemotePlayback_) {
        return;

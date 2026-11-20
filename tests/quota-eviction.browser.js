@@ -35,11 +35,13 @@ test('quota eviction releases played media; seeking after a full-buffer notice p
     page.on('pageerror', e => errors.push(String(e)));
     await page.goto(`http://127.0.0.1:${server.address().port}`);
     await page.evaluate(async () => {
-      window.probe = {quota: 0, removals: [], notices: 0, blockAll: false, forceEviction: true, errors: []};
+      window.probe = {quota: 0, aborts: 0, removals: [], notices: 0, blockAll: false, forceEviction: true, errors: []};
       const add = MediaSource.prototype.addSourceBuffer;
       MediaSource.prototype.addSourceBuffer = function(type) {
         const sb = add.call(this, type), append = sb.appendBuffer.bind(sb), remove = sb.remove.bind(sb);
         if (type.startsWith('video/')) {
+          const abort = sb.abort.bind(sb);
+          sb.abort = () => {probe.aborts++;return abort();};
           sb.appendBuffer = bytes => {
             // Model a renderer that cannot reclaim old data on append. Only
             // a real native remove can release this injected quota condition.
@@ -63,7 +65,14 @@ test('quota eviction releases played media; seeking after a full-buffer notice p
     assert.ok(recovered.removals.length > 0);
     assert.ok(recovered.removals.every(r => r.end <= r.at - 2), 'keep the segment/keyframe safety margin');
     assert.equal(recovered.notices, 0); assert.equal(recovered.paused, false);
-    await page.evaluate(() => {probe.forceEviction = false;probe.blockAll = true;});
+    await page.evaluate(() => {probe.forceEviction = false;probe.blockAll = true;probe.quotaBeforeBlock = probe.quota;});
+    await page.waitForFunction(() => probe.quota > probe.quotaBeforeBlock, null, {timeout: 10000});
+    const beforeBufferedSeek = await page.evaluate(() => probe.aborts);
+    await page.evaluate(() => {v.currentTime -= 0.1;});
+    await page.waitForFunction(() => !v.seeking, null, {timeout: 5000});
+    await page.waitForTimeout(250);
+    assert.equal(await page.evaluate(() => probe.aborts), beforeBufferedSeek,
+      'a buffered seek must not abort/replay the pending partial append');
     await page.waitForFunction(() => probe.notices > 0, null, {timeout: 30000});
     assert.equal(await page.evaluate(() => v.paused), false, 'buffer pressure cannot silently pause Cast');
     const beforeSeek = await page.evaluate(() => v.getVideoPlaybackQuality().totalVideoFrames);

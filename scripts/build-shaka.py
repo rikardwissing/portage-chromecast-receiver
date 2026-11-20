@@ -16,7 +16,7 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 VENDOR = ROOT / 'vendor/shaka'
 UPSTREAM = '889d6b76de168e75bb306c5ad442d7a79ee09e68'
-VERSION = 'v4.16.45-portage2'
+VERSION = 'v4.16.45-portage3'
 
 
 def run(*args, **kwargs):

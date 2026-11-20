@@ -21,7 +21,10 @@ manifest's maximum segment duration behind the playhead to protect keyframe
 dependencies. The usual eviction ran only before each complete segment, so a
 pending partial append could otherwise wait forever with played data retained.
 
-Seeking, clearing, resetting and destroying cancel pending appends. A cancelled
+Seeking outside buffered media, clearing A/V, resetting and destroying cancel
+pending appends. Buffered seeks and subtitle clearing leave them running: a
+player-generated gap hop must not abort a partial append and replay the segment.
+A cancelled
 partial MP4 append aborts its native parser through the same operation queue
 before Shaka retries or clears it. Quota pressure cancels the receiver's startup
 fallback watchdog. If playing makes no progress for 15 seconds, the player sends

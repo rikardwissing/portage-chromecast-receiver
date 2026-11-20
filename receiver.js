@@ -1490,7 +1490,7 @@ if (!PREVIEW) {
   // Let CAF load the pinned build and complete its player-ready promise.
   // skipShakaLoad leaves that promise pending even if window.shaka exists.
   // Keep bounded appends for HLS and DASH. See vendor/shaka/README.md.
-  startOptions.shakaUrl = new URL('vendor/shaka/shaka-player.portage.js?v=2026-11-20.4', document.baseURI).href;
+  startOptions.shakaUrl = new URL('vendor/shaka/shaka-player.portage.js?v=2026-11-20.5', document.baseURI).href;
   startOptions.shakaVersion = '4.16.45';
   context.start(startOptions);
 }
