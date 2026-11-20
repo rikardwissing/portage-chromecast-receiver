@@ -1096,6 +1096,7 @@ if (!PREVIEW) {
     const shaka = err.shakaErrorCode || (err.category === 4 ? err.code : 0);
     return shaka === 4032 || code === 102 || code === 104 || code === 110;
   }
+  let bufferFullReported = false;
   let loadWatch = null;
   function clearLoadWatch() { if (loadWatch) { clearTimeout(loadWatch); loadWatch = null; } }
   window.tvHelpers.bufferPressure = clearLoadWatch;
@@ -1109,8 +1110,11 @@ if (!PREVIEW) {
     const path = event.composedPath ? event.composedPath() : [event.target];
     if (path.indexOf(mediaElement()) < 0) return;
     clearLoadWatch();
+    if (bufferFullReported) return;
+    bufferFullReported = true;
     slog('media buffer stayed full: retaining the stream and play/pause intent');
-    tellSenders({ type: 'notice', reason: 'The TV’s media buffer is full. Try seeking or resuming playback.' });
+    tellSenders({ type: 'notice', code: 'bufferFull',
+      reason: 'This receiver’s playback buffer is full. A lower video bitrate may help.' });
   });
   function armLoadWatch() {
     clearLoadWatch();
@@ -1137,6 +1141,7 @@ if (!PREVIEW) {
   // keeps default playback.
   playerManager.setMessageInterceptor(messages.MessageType.LOAD, (request) => {
     teardownEngine();
+    bufferFullReported = false;
     clearSteppingDown();
     const media = request.media || {};
     const custom = media.customData || {};
