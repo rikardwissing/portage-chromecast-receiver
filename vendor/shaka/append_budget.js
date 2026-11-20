@@ -38,19 +38,21 @@ shaka.media.AppendBudget = class {
   /**
    * Each piece completes through Shaka's real SourceBuffer operation queue.
    * Rejected pieces have not been consumed by MSE; retry only those bytes.
-   * No synthetic updateend events, timestamp edits, eviction or codec changes.
+   * No synthetic updateend events, timestamp edits or codec changes.
    *
    * @param {!BufferSource} data
    * @param {function(!Uint8Array):!Promise} append
    * @param {number} generation
+   * @param {(?function():!Promise<boolean>)=} recoverQuota
    * @return {!Promise}
    */
-  async append(data, append, generation) {
+  async append(data, append, generation, recoverQuota = null) {
     const bytes = shaka.util.BufferUtils.toUint8(data);
     let offset = 0;
     let size = 4 * 1024 * 1024;
     let stalled = 0;
     let reportedQuota = false;
+    let reportedFull = false;
     while (offset < bytes.byteLength) {
       this.check(generation);
       const end = Math.min(offset + size, bytes.byteLength);
@@ -73,6 +75,14 @@ shaka.media.AppendBudget = class {
           size = Math.max(64 * 1024, Math.floor((end - offset) / 2));
           continue;
         }
+        // StreamingEngine normally evicts only before the whole segment.
+        // A pending partial append must let it reclaim played media as time
+        // advances, through its existing SourceBuffer operation queues.
+        if (recoverQuota) {
+          const freed = await recoverQuota();
+          this.check(generation);
+          if (freed) { stalled = 0; continue; }
+        }
         const position = this.video_.currentTime;
         const paused = this.video_.paused;
         const began = Date.now();
@@ -83,11 +93,10 @@ shaka.media.AppendBudget = class {
         } else if (!paused && !this.video_.paused) {
           stalled += Date.now() - began;
         }
-        if (stalled >= 15000) {
-          // Retain this stream and its pending bytes. Pausing lets the user
-          // choose a seek or explicit resume; never invoke Shaka's quota
-          // adaptation or the sender's format-reload recovery.
-          this.video_.pause();
+        if (stalled >= 15000 && !reportedFull) {
+          // Keep the user's play/pause intent. Pausing behind CAF's back
+          // leaves Cast reporting BUFFERING while a seek cannot resume.
+          reportedFull = true;
           this.video_.dispatchEvent(new CustomEvent('portagebufferfull',
               {bubbles: true, composed: true}));
           stalled = 0;

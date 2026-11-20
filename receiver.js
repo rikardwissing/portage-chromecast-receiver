@@ -1073,7 +1073,7 @@ if (!PREVIEW) {
     const path = event.composedPath ? event.composedPath() : [event.target];
     if (path.indexOf(mediaElement()) < 0) return;
     clearLoadWatch();
-    slog('media buffer stayed full: paused with the current stream retained');
+    slog('media buffer stayed full: retaining the stream and play/pause intent');
     tellSenders({ type: 'notice', reason: 'The TV’s media buffer is full. Try seeking or resuming playback.' });
   });
   function armLoadWatch() {
@@ -1490,7 +1490,7 @@ if (!PREVIEW) {
   // Let CAF load the pinned build and complete its player-ready promise.
   // skipShakaLoad leaves that promise pending even if window.shaka exists.
   // Keep bounded appends for HLS and DASH. See vendor/shaka/README.md.
-  startOptions.shakaUrl = new URL('vendor/shaka/shaka-player.portage.js?v=2026-11-20.1', document.baseURI).href;
+  startOptions.shakaUrl = new URL('vendor/shaka/shaka-player.portage.js?v=2026-11-20.4', document.baseURI).href;
   startOptions.shakaVersion = '4.16.45';
   context.start(startOptions);
 }

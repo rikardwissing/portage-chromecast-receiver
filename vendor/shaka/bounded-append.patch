@@ -1,8 +1,10 @@
 diff --git a/lib/media/media_source_engine.js b/lib/media/media_source_engine.js
-index 3ec9275..58a676a 100644
+index 3ec9275..6b5d734 100644
 --- a/lib/media/media_source_engine.js
 +++ b/lib/media/media_source_engine.js
-@@ -13,6 +13,7 @@ goog.require('shaka.device.DeviceFactory');
+@@ -11,10 +11,11 @@ goog.require('shaka.log');
+ goog.require('shaka.config.CodecSwitchingStrategy');
+ goog.require('shaka.device.DeviceFactory');
  goog.require('shaka.media.Capabilities');
  goog.require('shaka.media.ContentWorkarounds');
  goog.require('shaka.media.ClosedCaptionParser');
@@ -10,7 +12,11 @@ index 3ec9275..58a676a 100644
  goog.require('shaka.media.ManifestParser');
  goog.require('shaka.media.SegmentReference');
  goog.require('shaka.media.TimeRangesUtils');
-@@ -110,6 +111,12 @@ shaka.media.MediaSourceEngine = class {
+ goog.require('shaka.text.TextEngine');
+ goog.require('shaka.transmuxer.TransmuxerEngine');
+@@ -108,10 +109,16 @@ shaka.media.MediaSourceEngine = class {
+     this.queues_ = new Map();
+ 
      /** @private {shaka.util.EventManager} */
      this.eventManager_ = new shaka.util.EventManager();
  
@@ -23,7 +29,11 @@ index 3ec9275..58a676a 100644
      /**
       * @private {!Map<shaka.util.ManifestParserUtils.ContentType,
                           !shaka.extern.Transmuxer>} */
-@@ -412,6 +419,7 @@ shaka.media.MediaSourceEngine = class {
+     this.transmuxers_ = new Map();
+ 
+@@ -410,10 +417,11 @@ shaka.media.MediaSourceEngine = class {
+     return this.destroyer_.destroy();
+   }
  
    /** @private */
    async doDestroy_() {
@@ -31,23 +41,49 @@ index 3ec9275..58a676a 100644
      const Functional = shaka.util.Functional;
  
      const cleanup = [];
-@@ -1196,6 +1204,7 @@ shaka.media.MediaSourceEngine = class {
+ 
+     for (const [key, q] of this.queues_) {
+@@ -1188,16 +1196,18 @@ shaka.media.MediaSourceEngine = class {
+    *   variant(s).
+    * @param {boolean=} isChunkedData True if we add to the buffer from the
+    *   partial read of the segment.
+    * @param {boolean=} fromSplit
+    * @param {number=} continuityTimeline an optional continuity timeline
++   * @param {(?function():!Promise<boolean>)=} recoverQuota
+    * @return {!Promise}
+    */
+   async appendBuffer(
        contentType, data, reference, stream, hasClosedCaptions, seeked = false,
        adaptation = false, isChunkedData = false, fromSplit = false,
-       continuityTimeline) {
+-      continuityTimeline) {
++      continuityTimeline, recoverQuota = null) {
 +    const appendGeneration = this.appendBudget_.generation();
      const ContentType = shaka.util.ManifestParserUtils.ContentType;
  
      if (contentType == ContentType.TEXT) {
-@@ -1216,6 +1225,7 @@ shaka.media.MediaSourceEngine = class {
+       if (this.manifestType_ == shaka.media.ManifestParser.HLS) {
+         // This won't be known until the first video segment is appended.
+@@ -1213,14 +1223,15 @@ shaka.media.MediaSourceEngine = class {
+     }
+ 
+     if (!fromSplit && this.needSplitMuxedContent_) {
        await this.appendBuffer(ContentType.AUDIO, data, reference, stream,
            hasClosedCaptions, seeked, adaptation, isChunkedData,
-           /* fromSplit= */ true);
+-          /* fromSplit= */ true);
++          /* fromSplit= */ true, continuityTimeline, recoverQuota);
 +      this.appendBudget_.check(appendGeneration);
        await this.appendBuffer(ContentType.VIDEO, data, reference, stream,
            hasClosedCaptions, seeked, adaptation, isChunkedData,
-           /* fromSplit= */ true);
-@@ -1391,12 +1401,25 @@ shaka.media.MediaSourceEngine = class {
+-          /* fromSplit= */ true);
++          /* fromSplit= */ true, continuityTimeline, recoverQuota);
+       return;
+     }
+ 
+     if (!this.sourceBuffers_.has(contentType)) {
+       shaka.log.warning('Attempted to restore a non-existent source buffer');
+@@ -1389,16 +1400,30 @@ shaka.media.MediaSourceEngine = class {
+       }
+     }
  
      let bufferedBefore = null;
  
@@ -62,7 +98,8 @@ index 3ec9275..58a676a 100644
 +        this.enqueueOperation_(contentType, () => {
 +          this.appendBudget_.check(appendGeneration);
 +          this.append_(contentType, piece, timestampOffset, stream);
-+        }, reference ? reference.getUris()[0] : null), appendGeneration);
++        }, reference ? reference.getUris()[0] : null), appendGeneration,
++      recoverQuota);
 +    } catch (error) {
 +      if (error.code == shaka.util.Error.Code.OPERATION_ABORTED &&
 +          !this.destroyer_.destroyed() && !this.reloadingMediaSource_) {
@@ -78,7 +115,11 @@ index 3ec9275..58a676a 100644
  
      if (goog.DEBUG && reference && !reference.isPreload() && !isChunkedData) {
        const bufferedAfter = this.getBuffered_(contentType);
-@@ -1483,6 +1506,7 @@ shaka.media.MediaSourceEngine = class {
+       const newBuffered = shaka.media.TimeRangesUtils.computeAddedRange(
+           bufferedBefore, bufferedAfter);
+@@ -1481,10 +1506,11 @@ shaka.media.MediaSourceEngine = class {
+    *
+    * @param {shaka.util.ManifestParserUtils.ContentType} contentType
     * @return {!Promise}
     */
    async clear(contentType) {
@@ -86,7 +127,11 @@ index 3ec9275..58a676a 100644
      const ContentType = shaka.util.ManifestParserUtils.ContentType;
      if (contentType == ContentType.TEXT) {
        if (!this.textEngine_) {
-@@ -2153,7 +2177,9 @@ shaka.media.MediaSourceEngine = class {
+         return;
+       }
+@@ -2151,11 +2177,13 @@ shaka.media.MediaSourceEngine = class {
+     const next = this.queues_.get(contentType)[0];
+     if (next) {
        try {
          next.start();
        } catch (exception) {
@@ -97,7 +142,11 @@ index 3ec9275..58a676a 100644
            next.p.reject(new shaka.util.Error(
                shaka.util.Error.Severity.CRITICAL,
                shaka.util.Error.Category.MEDIA,
-@@ -2340,6 +2366,7 @@ shaka.media.MediaSourceEngine = class {
+               shaka.util.Error.Code.QUOTA_EXCEEDED_ERROR,
+               contentType));
+@@ -2338,10 +2366,11 @@ shaka.media.MediaSourceEngine = class {
+   async reset_(streamsByType) {
+     if (this.reloadingMediaSource_ || this.usingRemotePlayback_) {
        return;
      }
      const ContentType = shaka.util.ManifestParserUtils.ContentType;
@@ -105,3 +154,91 @@ index 3ec9275..58a676a 100644
      this.reloadingMediaSource_ = true;
      this.needSplitMuxedContent_ = false;
      const currentTime = this.video_.currentTime;
+ 
+     // When codec switching if the user is currently paused we don't want
+diff --git a/lib/media/streaming_engine.js b/lib/media/streaming_engine.js
+index 0a0c4d0..385cc5a 100644
+--- a/lib/media/streaming_engine.js
++++ b/lib/media/streaming_engine.js
+@@ -2769,23 +2769,28 @@ shaka.media.StreamingEngine = class {
+         reference,
+         stream,
+         hasClosedCaptions,
+         seeked,
+         adaptation,
+-        isChunkedData);
++        isChunkedData,
++        /* fromSplit= */ false, /* continuityTimeline= */ undefined,
++        () => this.evict_(mediaState,
++            this.playerInterface_.getPresentationTime(), /* quota= */ true));
+     this.destroyer_.ensureNotDestroyed();
+     shaka.log.v2(logPrefix, 'appended media segment');
+   }
+ 
+   /**
+    * Evicts media to meet the max buffer behind limit.
+    *
+    * @param {shaka.media.StreamingEngine.MediaState_} mediaState
+    * @param {number} presentationTime
++   * @param {boolean=} quota Reclaim played data during a pending quota retry.
++   * @return {!Promise<boolean>} Whether any buffered data was removed.
+    * @private
+    */
+-  async evict_(mediaState, presentationTime) {
++  async evict_(mediaState, presentationTime, quota = false) {
+     if (this.lastTextMediaStateBeforeUnload_ == mediaState) {
+       this.lastTextMediaStateBeforeUnload_ = null;
+     }
+     const segmentIndex = mediaState.stream.segmentIndex;
+     /** @type {Array<number>} */
+@@ -2805,21 +2810,21 @@ shaka.media.StreamingEngine = class {
+ 
+     // Use the max segment duration, if it is longer than the bufferBehind, to
+     // avoid accidentally clearing too much data when dealing with a manifest
+     // with a long keyframe interval.
+     const bufferBehind = Math.max(
+-        this.config_.bufferBehind * this.bufferingScale_,
++        quota ? 1 : this.config_.bufferBehind * this.bufferingScale_,
+         this.manifest_.presentationTimeline.getMaxSegmentDuration());
+ 
+     const startTime =
+         this.playerInterface_.mediaSourceEngine.bufferStart(mediaState.type);
+     if (startTime == null) {
+       shaka.log.v2(logPrefix,
+           'buffer behind okay because nothing buffered:',
+           'presentationTime=' + presentationTime,
+           'bufferBehind=' + bufferBehind);
+-      return;
++      return false;
+     }
+     const bufferedBehind = presentationTime - startTime;
+ 
+     const evictionGoal = this.config_.evictionGoal;
+ 
+@@ -2840,11 +2845,11 @@ shaka.media.StreamingEngine = class {
+           'presentationTime=' + presentationTime,
+           'bufferedBehind=' + bufferedBehind,
+           'bufferBehind=' + bufferBehind,
+           'evictionGoal=' + evictionGoal,
+           'underflow=' + Math.abs(overflow));
+-      return;
++      return false;
+     }
+ 
+     shaka.log.v1(logPrefix,
+         'buffer behind too large:',
+         'presentationTime=' + presentationTime,
+@@ -2861,10 +2866,13 @@ shaka.media.StreamingEngine = class {
+ 
+     if (this.lastTextMediaStateBeforeUnload_) {
+       await this.evict_(this.lastTextMediaStateBeforeUnload_, presentationTime);
+       this.destroyer_.ensureNotDestroyed();
+     }
++    const remainingStart =
++        this.playerInterface_.mediaSourceEngine.bufferStart(mediaState.type);
++    return remainingStart == null || remainingStart > startTime;
+   }
+ 
+ 
+   /**
+    * @param {shaka.media.StreamingEngine.MediaState_} mediaState

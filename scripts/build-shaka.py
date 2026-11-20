@@ -16,7 +16,7 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 VENDOR = ROOT / 'vendor/shaka'
 UPSTREAM = '889d6b76de168e75bb306c5ad442d7a79ee09e68'
-VERSION = 'v4.16.45-portage1'
+VERSION = 'v4.16.45-portage2'
 
 
 def run(*args, **kwargs):
@@ -31,11 +31,12 @@ def main():
         raise SystemExit('Expected the pinned Shaka v4.16.45 commit; use a dedicated checkout.')
     patch = VENDOR / 'bounded-append.patch'
     dirty = run('git', '-C', str(source), 'diff', '--name-only')
-    if dirty and dirty != 'lib/media/media_source_engine.js':
+    patched_files = ['lib/media/media_source_engine.js', 'lib/media/streaming_engine.js']
+    if dirty and sorted(dirty.splitlines()) != patched_files:
         raise SystemExit('The source checkout contains unrelated edits.')
     if not dirty:
         subprocess.run(['git', '-C', str(source), 'apply', str(patch)], check=True)
-    actual = run('git', '-C', str(source), 'diff', '--', 'lib/media/media_source_engine.js')
+    actual = run('git', '-C', str(source), 'diff', '--unified=5', '--', *patched_files)
     if actual != patch.read_text().strip():
         raise SystemExit('The source edits differ from the checked-in patch.')
     for name in ['package.json', 'package-lock.json']:
