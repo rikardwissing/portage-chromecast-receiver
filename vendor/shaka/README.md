@@ -20,6 +20,9 @@ played media through Shaka's existing removal queue. It keeps at least the
 manifest's maximum segment duration behind the playhead to protect keyframe
 dependencies. The usual eviction ran only before each complete segment, so a
 pending partial append could otherwise wait forever with played data retained.
+For muxed streams split into separate native buffers, eviction starts at the
+oldest audio or video timestamp. Independent native video eviction must not
+leave older audio outside every subsequent removal range.
 
 Seeking outside buffered media, clearing A/V, resetting and destroying cancel
 pending appends. Buffered seeks and subtitle clearing leave them running: a
@@ -82,6 +85,11 @@ integration failures that direct Shaka tests cannot detect.
 played data before accepting more bytes. It verifies actual MSE removal and
 frame progress, then forces an unrecoverable quota wait and checks that a seek
 recovers without an extra play command. An intentional user pause stays paused.
+
+`muxed-eviction.browser.js` removes old video independently, then forces audio
+quota pressure until the corresponding audio is actually removed. It exercises
+Shaka's split muxed path with native audio and video SourceBuffers and checks
+continued playback without replacing the source.
 
 A separate local replay of the original Moomin segments reproduced stock
 4.16.45 failing at 65.38 seconds with MEDIA.QUOTA_EXCEEDED_ERROR (3017). This build

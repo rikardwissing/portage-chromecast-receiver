@@ -171,7 +171,7 @@ index 3ec9275..2ce89b8 100644
  
      // When codec switching if the user is currently paused we don't want
 diff --git a/lib/media/streaming_engine.js b/lib/media/streaming_engine.js
-index 0a0c4d0..385cc5a 100644
+index 0a0c4d0..465913f 100644
 --- a/lib/media/streaming_engine.js
 +++ b/lib/media/streaming_engine.js
 @@ -2769,23 +2769,28 @@ shaka.media.StreamingEngine = class {
@@ -205,7 +205,7 @@ index 0a0c4d0..385cc5a 100644
      }
      const segmentIndex = mediaState.stream.segmentIndex;
      /** @type {Array<number>} */
-@@ -2805,21 +2810,21 @@ shaka.media.StreamingEngine = class {
+@@ -2805,21 +2810,38 @@ shaka.media.StreamingEngine = class {
  
      // Use the max segment duration, if it is longer than the bufferBehind, to
      // avoid accidentally clearing too much data when dealing with a manifest
@@ -215,8 +215,27 @@ index 0a0c4d0..385cc5a 100644
 +        quota ? 1 : this.config_.bufferBehind * this.bufferingScale_,
          this.manifest_.presentationTimeline.getMaxSegmentDuration());
  
-     const startTime =
-         this.playerInterface_.mediaSourceEngine.bufferStart(mediaState.type);
+-    const startTime =
+-        this.playerInterface_.mediaSourceEngine.bufferStart(mediaState.type);
++    const mse = this.playerInterface_.mediaSourceEngine;
++    const ContentType = shaka.util.ManifestParserUtils.ContentType;
++    const pairedAudio = mediaState.type == ContentType.VIDEO &&
++        !this.mediaStates_.has(ContentType.AUDIO) &&
++        mse.hasSourceBufferFor(ContentType.AUDIO);
++    const bufferStart = () => {
++      let start = mse.bufferStart(mediaState.type);
++      if (pairedAudio) {
++        const audioStart = mse.bufferStart(ContentType.AUDIO);
++        if (audioStart != null) {
++          start = start == null ? audioStart : Math.min(start, audioStart);
++        }
++      }
++      return start;
++    };
++    // A muxed stream has one media state but two native buffers. Native
++    // eviction may have advanced video farther than audio; removal must
++    // start at the oldest of both or it leaves orphaned audio behind.
++    const startTime = bufferStart();
      if (startTime == null) {
        shaka.log.v2(logPrefix,
            'buffer behind okay because nothing buffered:',
@@ -229,7 +248,7 @@ index 0a0c4d0..385cc5a 100644
  
      const evictionGoal = this.config_.evictionGoal;
  
-@@ -2840,11 +2845,11 @@ shaka.media.StreamingEngine = class {
+@@ -2840,11 +2862,11 @@ shaka.media.StreamingEngine = class {
            'presentationTime=' + presentationTime,
            'bufferedBehind=' + bufferedBehind,
            'bufferBehind=' + bufferBehind,
@@ -242,14 +261,13 @@ index 0a0c4d0..385cc5a 100644
      shaka.log.v1(logPrefix,
          'buffer behind too large:',
          'presentationTime=' + presentationTime,
-@@ -2861,10 +2866,13 @@ shaka.media.StreamingEngine = class {
+@@ -2861,10 +2883,12 @@ shaka.media.StreamingEngine = class {
  
      if (this.lastTextMediaStateBeforeUnload_) {
        await this.evict_(this.lastTextMediaStateBeforeUnload_, presentationTime);
        this.destroyer_.ensureNotDestroyed();
      }
-+    const remainingStart =
-+        this.playerInterface_.mediaSourceEngine.bufferStart(mediaState.type);
++    const remainingStart = bufferStart();
 +    return remainingStart == null || remainingStart > startTime;
    }
  

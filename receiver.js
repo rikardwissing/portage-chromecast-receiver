@@ -18,12 +18,46 @@ const PREVIEW = new URLSearchParams(location.search).get('preview');
 
 let diagnosticMediaSource = null;
 const diagnosticBufferTypes = new WeakMap();
+const diagnosticBufferOperations = new WeakMap();
 if (window.MediaSource) {
   const originalAddSourceBuffer = MediaSource.prototype.addSourceBuffer;
   MediaSource.prototype.addSourceBuffer = function (mime) {
     const buffer = originalAddSourceBuffer.call(this, mime);
     diagnosticMediaSource = this;
     diagnosticBufferTypes.set(buffer, mime);
+    const operations = {appends: 0, bytes: 0, quota: 0, aborts: 0, recent: []};
+    diagnosticBufferOperations.set(buffer, operations);
+    function record(operation) {
+      try {
+        const element = mediaElement();
+        const entry = Object.assign({at: element ? element.currentTime : null,
+          ranges: diagnosticRanges(buffer.buffered)}, operation);
+        operations.recent.push(entry);
+        if (operations.recent.length > 12) operations.recent.shift();
+      } catch (error) { /* A detached buffer must not affect playback. */ }
+    }
+    const append = buffer.appendBuffer.bind(buffer);
+    buffer.appendBuffer = function (bytes) {
+      try {
+        const result = append(bytes);
+        operations.appends++;operations.bytes += bytes.byteLength;
+        return result;
+      } catch (error) {
+        if (error.name === 'QuotaExceededError') operations.quota++;
+        record({operation: 'appendError', error: error.name, bytes: bytes.byteLength});
+        throw error;
+      }
+    };
+    const remove = buffer.remove.bind(buffer);
+    buffer.remove = function (start, end) {
+      record({operation: 'remove', start, end});
+      return remove(start, end);
+    };
+    const abort = buffer.abort.bind(buffer);
+    buffer.abort = function () {
+      operations.aborts++;record({operation: 'abort'});
+      return abort();
+    };
     return buffer;
   };
 }
@@ -950,7 +984,8 @@ if (!PREVIEW) {
         for (let i = 0; buffers && i < buffers.length; i++) {
           stats.sourceBuffers.push({mime: diagnosticBufferTypes.get(buffers[i]),
             ranges: diagnosticRanges(buffers[i].buffered), updating: buffers[i].updating, mode: buffers[i].mode,
-            timestampOffset: buffers[i].timestampOffset});
+            timestampOffset: buffers[i].timestampOffset,
+            operations: diagnosticBufferOperations.get(buffers[i])});
         }
       } catch (e) {}
       const now = element.currentTime;
@@ -1495,7 +1530,7 @@ if (!PREVIEW) {
   // Let CAF load the pinned build and complete its player-ready promise.
   // skipShakaLoad leaves that promise pending even if window.shaka exists.
   // Keep bounded appends for HLS and DASH. See vendor/shaka/README.md.
-  startOptions.shakaUrl = new URL('vendor/shaka/shaka-player.portage.js?v=2026-11-20.5', document.baseURI).href;
+  startOptions.shakaUrl = new URL('vendor/shaka/shaka-player.portage.js?v=2026-11-20.7', document.baseURI).href;
   startOptions.shakaVersion = '4.16.45';
   context.start(startOptions);
 }
