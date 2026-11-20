@@ -1246,8 +1246,13 @@ if (!PREVIEW) {
         },
       };
       if (isMadeStream) {
-        // A copied picture's segments carry exact times; sequence mode slipped one track a segment behind on them.
-        if (custom.copiedPicture === true) playbackConfig.shakaConfig.manifest.hls.sequenceMode = false;
+        // Copied media already carries its continuous decode/presentation
+        // timeline. Do not retime each segment to rounded playlist durations:
+        // the repeated offset resets can introduce A/V gaps with B-frames.
+        if (custom.copiedPicture === true) {
+          playbackConfig.shakaConfig.manifest.hls.sequenceMode = false;
+          playbackConfig.shakaConfig.manifest.hls.ignoreManifestTimestampsInSegmentsMode = true;
+        }
         playbackConfig.autoResumeDuration = 1;
         playbackConfig.shakaConfig.streaming.rebufferingGoal = 1;
         playbackConfig.shakaConfig.streaming.bufferingGoal = 20;
