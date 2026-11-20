@@ -69,7 +69,7 @@ test('CAF cold and cached HLS loads reach moving frames with the pinned player',
         const video = document.querySelector('cast-media-player').shadowRoot.querySelector('video');
         return video.currentTime > start + 1 && video.getVideoPlaybackQuality().totalVideoFrames > 15 && !video.paused;
       }, start, {timeout: 12000});
-      assert.equal(await page.evaluate(() => shaka.Player.version), 'v4.16.45-portage2');
+      assert.equal(await page.evaluate(() => shaka.Player.version), 'v4.16.45-portage3');
     }
     assert.equal(playerRequests.length, 1, 'CAF loads the pinned player once, including across repeat LOAD');
     assert.ok(playerRequests[0].includes('/vendor/shaka/shaka-player.portage.js'));
