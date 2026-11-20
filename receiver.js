@@ -16,6 +16,12 @@
 const NS = 'urn:x-cast:dev.rikard.portage';
 const PREVIEW = new URLSearchParams(location.search).get('preview');
 
+function mediaElement() {
+  const host = document.querySelector('cast-media-player');
+  const inShadow = host && host.shadowRoot && host.shadowRoot.querySelector('video');
+  return inShadow || document.querySelector('video');
+}
+
 let diagnosticMediaSource = null;
 const diagnosticBufferTypes = new WeakMap();
 const diagnosticBufferOperations = new WeakMap();
@@ -900,11 +906,6 @@ if (!PREVIEW) {
   let loadAudioCodec = null;
   let audioCheck = null;
   function clearAudioCheck() { if (audioCheck) { clearTimeout(audioCheck); audioCheck = null; } }
-  function mediaElement() {
-    const host = document.querySelector('cast-media-player');
-    const inShadow = host && host.shadowRoot && host.shadowRoot.querySelector('video');
-    return inShadow || document.querySelector('video');
-  }
   let loadPlayer = 'native player';
   let statsLogged = false;
   let lastDecoded = null;
@@ -1290,7 +1291,10 @@ if (!PREVIEW) {
         }
         playbackConfig.autoResumeDuration = 1;
         playbackConfig.shakaConfig.streaming.rebufferingGoal = 1;
-        playbackConfig.shakaConfig.streaming.bufferingGoal = 20;
+        // A short working set avoids filling native buffers with future
+        // high-bitrate media. This changes buffering only, never encoding.
+        playbackConfig.shakaConfig.streaming.bufferingGoal = 4;
+        playbackConfig.shakaConfig.streaming.bufferBehind = 4;
       }
       playbackConfig.segmentRequestRetryLimit = 8;
       slog('plex stream load: shaka' + (dolby ? ' + fmp4-split' : '') +
@@ -1530,7 +1534,7 @@ if (!PREVIEW) {
   // Let CAF load the pinned build and complete its player-ready promise.
   // skipShakaLoad leaves that promise pending even if window.shaka exists.
   // Keep bounded appends for HLS and DASH. See vendor/shaka/README.md.
-  startOptions.shakaUrl = new URL('vendor/shaka/shaka-player.portage.js?v=2026-11-20.7', document.baseURI).href;
+  startOptions.shakaUrl = new URL('vendor/shaka/shaka-player.portage.js?v=2026-11-20.8', document.baseURI).href;
   startOptions.shakaVersion = '4.16.45';
   context.start(startOptions);
 }
