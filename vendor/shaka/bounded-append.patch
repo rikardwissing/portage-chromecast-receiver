@@ -1,0 +1,107 @@
+diff --git a/lib/media/media_source_engine.js b/lib/media/media_source_engine.js
+index 3ec9275..58a676a 100644
+--- a/lib/media/media_source_engine.js
++++ b/lib/media/media_source_engine.js
+@@ -13,6 +13,7 @@ goog.require('shaka.device.DeviceFactory');
+ goog.require('shaka.media.Capabilities');
+ goog.require('shaka.media.ContentWorkarounds');
+ goog.require('shaka.media.ClosedCaptionParser');
++goog.require('shaka.media.AppendBudget');
+ goog.require('shaka.media.ManifestParser');
+ goog.require('shaka.media.SegmentReference');
+ goog.require('shaka.media.TimeRangesUtils');
+@@ -110,6 +111,12 @@ shaka.media.MediaSourceEngine = class {
+     /** @private {shaka.util.EventManager} */
+     this.eventManager_ = new shaka.util.EventManager();
+ 
++    /** @private {!shaka.media.AppendBudget} */
++    this.appendBudget_ = new shaka.media.AppendBudget(video);
++    if (video) {
++      this.eventManager_.listen(video, 'seeking', () => this.appendBudget_.cancel());
++    }
++
+     /**
+      * @private {!Map<shaka.util.ManifestParserUtils.ContentType,
+                          !shaka.extern.Transmuxer>} */
+@@ -412,6 +419,7 @@ shaka.media.MediaSourceEngine = class {
+ 
+   /** @private */
+   async doDestroy_() {
++    this.appendBudget_.cancel();
+     const Functional = shaka.util.Functional;
+ 
+     const cleanup = [];
+@@ -1196,6 +1204,7 @@ shaka.media.MediaSourceEngine = class {
+       contentType, data, reference, stream, hasClosedCaptions, seeked = false,
+       adaptation = false, isChunkedData = false, fromSplit = false,
+       continuityTimeline) {
++    const appendGeneration = this.appendBudget_.generation();
+     const ContentType = shaka.util.ManifestParserUtils.ContentType;
+ 
+     if (contentType == ContentType.TEXT) {
+@@ -1216,6 +1225,7 @@ shaka.media.MediaSourceEngine = class {
+       await this.appendBuffer(ContentType.AUDIO, data, reference, stream,
+           hasClosedCaptions, seeked, adaptation, isChunkedData,
+           /* fromSplit= */ true);
++      this.appendBudget_.check(appendGeneration);
+       await this.appendBuffer(ContentType.VIDEO, data, reference, stream,
+           hasClosedCaptions, seeked, adaptation, isChunkedData,
+           /* fromSplit= */ true);
+@@ -1391,12 +1401,25 @@ shaka.media.MediaSourceEngine = class {
+ 
+     let bufferedBefore = null;
+ 
+-    await this.enqueueOperation_(contentType, () => {
+-      if (goog.DEBUG && reference && !reference.isPreload() && !isChunkedData) {
+-        bufferedBefore = this.getBuffered_(contentType);
++    if (goog.DEBUG && reference && !reference.isPreload() && !isChunkedData) {
++      bufferedBefore = this.getBuffered_(contentType);
++    }
++    try {
++      await this.appendBudget_.append(data, (piece) =>
++        this.enqueueOperation_(contentType, () => {
++          this.appendBudget_.check(appendGeneration);
++          this.append_(contentType, piece, timestampOffset, stream);
++        }, reference ? reference.getUris()[0] : null), appendGeneration);
++    } catch (error) {
++      if (error.code == shaka.util.Error.Code.OPERATION_ABORTED &&
++          !this.destroyer_.destroyed() && !this.reloadingMediaSource_) {
++        // A cancellation may leave a partial MP4 box in the native parser.
++        // Reset it through the normal queue before any replacement append.
++        await this.enqueueOperation_(contentType,
++            () => this.abort_(contentType), null);
+       }
+-      this.append_(contentType, data, timestampOffset, stream);
+-    }, reference ? reference.getUris()[0] : null);
++      throw error;
++    }
+ 
+     if (goog.DEBUG && reference && !reference.isPreload() && !isChunkedData) {
+       const bufferedAfter = this.getBuffered_(contentType);
+@@ -1483,6 +1506,7 @@ shaka.media.MediaSourceEngine = class {
+    * @return {!Promise}
+    */
+   async clear(contentType) {
++    this.appendBudget_.cancel();
+     const ContentType = shaka.util.ManifestParserUtils.ContentType;
+     if (contentType == ContentType.TEXT) {
+       if (!this.textEngine_) {
+@@ -2153,7 +2177,9 @@ shaka.media.MediaSourceEngine = class {
+       try {
+         next.start();
+       } catch (exception) {
+-        if (exception.name == 'QuotaExceededError') {
++        if (exception.code == shaka.util.Error.Code.OPERATION_ABORTED) {
++          next.p.reject(exception);
++        } else if (exception.name == 'QuotaExceededError') {
+           next.p.reject(new shaka.util.Error(
+               shaka.util.Error.Severity.CRITICAL,
+               shaka.util.Error.Category.MEDIA,
+@@ -2340,6 +2366,7 @@ shaka.media.MediaSourceEngine = class {
+       return;
+     }
+     const ContentType = shaka.util.ManifestParserUtils.ContentType;
++    this.appendBudget_.cancel();
+     this.reloadingMediaSource_ = true;
+     this.needSplitMuxedContent_ = false;
+     const currentTime = this.video_.currentTime;

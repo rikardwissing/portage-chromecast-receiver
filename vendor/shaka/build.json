@@ -1,0 +1,10 @@
+{
+  "upstream": "889d6b76de168e75bb306c5ad442d7a79ee09e68",
+  "version": "v4.16.45-portage1",
+  "sha256": {
+    "append_budget.js": "6fa04c95ecc9ba209c743a8c402ebe2c7464a18efe2ad6f62dc9813acf5715d2",
+    "bounded-append.patch": "1d1462ca56ffff68d03e998a49bc3bb314de3efddf998415715c5ba3d31997c1",
+    "build-tools/package-lock.json": "3a34ac33643cc1f347986d5546d3c37708aa7b7f1424de4c4974533847f2adb9",
+    "shaka-player.portage.js": "6d9b4f9f66edc327930e9b58460fef756031db9dab0d99b30711d0f7edde9145"
+  }
+}

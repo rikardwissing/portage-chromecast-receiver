@@ -1,0 +1,2 @@
+# Unified diffs contain a context prefix on otherwise empty lines.
+vendor/shaka/bounded-append.patch whitespace=-blank-at-eol

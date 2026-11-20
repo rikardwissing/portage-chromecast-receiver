@@ -1,0 +1,7 @@
+{
+  "dependencies": {
+    "@babel/parser": "7.28.5",
+    "google-closure-compiler-java": "20260223.0.0",
+    "google-closure-library": "github:joeyparrish/closure-library#74db0395c2bef5fee6eef754d85ccf824b5fde45"
+  }
+}
