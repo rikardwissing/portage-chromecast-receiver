@@ -12,7 +12,7 @@ const {chromium} = require('playwright-core');
 const root = path.resolve(__dirname, '..');
 const sdk = 'https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js';
 
-test('CAF cold and cached HLS loads reach moving frames with the pinned player', {timeout: 60000}, async () => {
+test('CAF starts copied HLS and preserves encoded timestamps across rounded playlist durations', {timeout: 60000}, async () => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'portage-caf-'));
   let browser, server;
   try {
@@ -23,12 +23,21 @@ test('CAF cold and cached HLS loads reach moving frames with the pinned player',
     const result = spawnSync(process.env.FFMPEG || 'ffmpeg', [
       '-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=25',
       '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '16',
-      '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-g', '50',
+      '-c:v', 'libx264', '-preset', 'medium', '-pix_fmt', 'yuv420p', '-g', '50', '-bf', '3',
       '-c:a', 'aac', '-b:a', '128k', '-f', 'hls', '-hls_time', '2', '-hls_playlist_type', 'vod',
       '-hls_segment_type', 'fmp4', '-hls_segment_filename', path.join(fixture, 'segment-%d.m4s'),
       path.join(fixture, 'media.m3u8'),
     ], {encoding: 'utf8', timeout: 15000});
     assert.equal(result.status, 0, String(result.error || result.stderr));
+    const init = fs.readFileSync(path.join(fixture, 'init.mp4'));
+    const avcC = init.indexOf(Buffer.from('avcC'));
+    assert.ok(avcC > 0);
+    const codecs = 'avc1.' + init.subarray(avcC + 5, avcC + 8).toString('hex') + ',mp4a.40.2';
+    // Playlist rounding must not move the already-continuous encoded A/V.
+    let segment = 0;
+    const playlist = path.join(fixture, 'media.m3u8');
+    fs.writeFileSync(playlist, fs.readFileSync(playlist, 'utf8').replace(/#EXTINF:([\d.]+)/g,
+      (_, duration) => '#EXTINF:' + (Number(duration) + (segment++ % 2 ? -0.05 : 0.05)).toFixed(6)));
     const requests = [];
     server = http.createServer(async (req, res) => {
       const name = new URL(req.url, 'http://local').pathname;
@@ -37,7 +46,7 @@ test('CAF cold and cached HLS loads reach moving frames with the pinned player',
       if (name === '/caf.js') { res.setHeader('Content-Type', 'application/javascript'); res.end(caf); return; }
       if (name === '/master.m3u8') {
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-        res.end('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000,CODECS="avc1.42c00c,mp4a.40.2",RESOLUTION=320x180\nmedia.m3u8\n'); return;
+        res.end('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000,CODECS="' + codecs + '",RESOLUTION=320x180\nmedia.m3u8\n'); return;
       }
       const media = /^\/(media\.m3u8|init\.mp4|segment-\d+\.m4s)$/.test(name);
       const file = path.join(media ? fixture : root, name === '/' ? 'index.html' : name);
@@ -57,19 +66,29 @@ test('CAF cold and cached HLS loads reach moving frames with the pinned player',
     const errors = [], playerRequests = [];
     page.on('pageerror', e => errors.push(String(e)));
     page.on('request', r => {if (/shaka-player.*\.js/.test(r.url())) playerRequests.push(r.url());});
+    await page.addInitScript(() => {
+      window.offsetWrites = [];
+      const native = Object.getOwnPropertyDescriptor(SourceBuffer.prototype, 'timestampOffset');
+      Object.defineProperty(SourceBuffer.prototype, 'timestampOffset', {...native,
+        set(value) {native.set.call(this, value);window.offsetWrites.push(value);}});
+    });
     await page.goto(`http://127.0.0.1:${server.address().port}/`, {waitUntil: 'domcontentloaded'});
     for (const start of [0, 6]) {
-      await page.evaluate(start => {
+      await page.evaluate(({start, codecs}) => {
+        window.offsetWrites = [];
         const manager = cast.framework.CastReceiverContext.getInstance().getPlayerManager();
         manager.load({type: 'LOAD', requestId: start + 1, autoplay: true, currentTime: start,
           media: {contentId: location.origin + '/master.m3u8', contentType: 'application/vnd.apple.mpegurl',
-            streamType: 'BUFFERED', customData: {madeStream: true, streamCodecs: 'avc1.42c00c,mp4a.40.2', streamContainer: 'fmp4'}}});
-      }, start);
+            streamType: 'BUFFERED', customData: {madeStream: true, copiedPicture: true, streamCodecs: codecs, streamContainer: 'fmp4'}}});
+      }, {start, codecs});
       await page.waitForFunction(start => {
         const video = document.querySelector('cast-media-player').shadowRoot.querySelector('video');
-        return video.currentTime > start + 1 && video.getVideoPlaybackQuality().totalVideoFrames > 15 && !video.paused;
+        return video.currentTime > start + 4 && video.getVideoPlaybackQuality().totalVideoFrames > 75 && !video.paused;
       }, start, {timeout: 12000});
       assert.equal(await page.evaluate(() => shaka.Player.version), 'v4.16.45-portage3');
+      const offsets = await page.evaluate(() => window.offsetWrites);
+      assert.ok(offsets.every(value => Math.abs(value) < 0.001),
+        'continuous media must not be retimed at each rounded playlist boundary: ' + offsets);
     }
     assert.equal(playerRequests.length, 1, 'CAF loads the pinned player once, including across repeat LOAD');
     assert.ok(playerRequests[0].includes('/vendor/shaka/shaka-player.portage.js'));
