@@ -29,14 +29,17 @@ test('native buffer pressure cannot trigger startup fallback, reload or format r
   handlers.portagebufferpressure({target: active}); assert.equal(cleared, 3);
 });
 
-test('CAF uses the vendored player loaded before the framework', () => {
+test('CAF owns loading the vendored player so its readiness promise can settle', () => {
   const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-  assert.ok(html.indexOf('vendor/shaka/shaka-player.portage.js') < html.indexOf('cast_receiver_framework.js'));
+  assert.doesNotMatch(html, /<script[^>]+shaka-player\.portage/);
   const start = receiver.indexOf('  const startOptions = new cast.framework.CastReceiverOptions();');
   let options;
   vm.runInNewContext(receiver.slice(start, receiver.indexOf('context.start(startOptions);', start) + 'context.start(startOptions);'.length), {
     cast: {framework: {CastReceiverOptions: class {}}}, context: {start: value => {options = value;}},
+    URL, document: {baseURI: 'https://receiver.example/subdirectory/'},
   });
-  assert.equal(options.skipShakaLoad, true); assert.equal(options.useShakaForHls, true);
-  assert.equal(options.shakaVersion, undefined);
+  assert.notEqual(options.skipShakaLoad, true); assert.equal(options.useShakaForHls, true);
+  assert.notEqual(options.skipPlayersLoad, true);
+  assert.equal(options.shakaUrl, 'https://receiver.example/subdirectory/vendor/shaka/shaka-player.portage.js?v=2026-11-20.1');
+  assert.equal(options.shakaVersion, '4.16.45');
 });

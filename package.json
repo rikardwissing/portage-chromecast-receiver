@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "test": "node --test tests/*.test.js",
-    "test:browser": "node --test tests/append-budget.browser.js"
+    "test:browser": "node --test tests/*.browser.js"
   },
   "devDependencies": { "playwright-core": "1.65.1" }
 }

@@ -1,7 +1,11 @@
 # Pinned Shaka build
 
-CAF loads `shaka-player.portage.js` from this receiver before startup, using the
-public `CastReceiverOptions.skipShakaLoad` option. Upstream remains **4.16.45**,
+CAF loads `shaka-player.portage.js` through its `shakaUrl` receiver option,
+so its own library-ready promise completes before playback. This option is
+implemented by CAF but is not listed in its public reference; the CAF startup
+integration test checks that the framework loads and uses our player.
+Do not preload Shaka with `skipShakaLoad`: CAF then waits forever for its loader,
+even when `window.shaka` already exists. Upstream remains **4.16.45**,
 commit `889d6b76de168e75bb306c5ad442d7a79ee09e68`.
 
 The source patch adds bounded appends inside Shaka's MediaSourceEngine operation
@@ -57,6 +61,12 @@ waiting. It checks frame progress, A/V buffered coverage, unchanged codecs,
 resolution, bandwidth and MediaSource URL. Temporary generated media is removed.
 The Node tests cover exact byte preservation, partial views, genuine errors,
 paused quota waits, cancellation and the receiver's no-fallback message path.
+
+`caf-startup.browser.js` also loads the actual Google Cast framework and the
+receiver page, sends LOAD while the pinned player is still downloading, and
+checks decoded frames on both that load and a repeat load. It fetches the current
+CAF SDK, or reads `CAF_SCRIPT` when set to a saved SDK file. This catches loader
+integration failures that direct Shaka tests cannot detect.
 
 A separate local replay of the original Moomin segments reproduced stock
 4.16.45 failing at 65.38 seconds with MEDIA.QUOTA_EXCEEDED_ERROR (3017). This build
