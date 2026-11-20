@@ -1487,8 +1487,10 @@ if (!PREVIEW) {
   // chance of simply playing. Revert this option if package casts regress.
   const startOptions = new cast.framework.CastReceiverOptions();
   startOptions.useShakaForHls = true;
-  // Preloaded, pinned 4.16.45 with bounded appends in its operation queue.
-  // CAF must use that build, including for DASH. See vendor/shaka/README.md.
-  startOptions.skipShakaLoad = true;
+  // Let CAF load the pinned build and complete its player-ready promise.
+  // skipShakaLoad leaves that promise pending even if window.shaka exists.
+  // Keep bounded appends for HLS and DASH. See vendor/shaka/README.md.
+  startOptions.shakaUrl = new URL('vendor/shaka/shaka-player.portage.js?v=2026-11-20.1', document.baseURI).href;
+  startOptions.shakaVersion = '4.16.45';
   context.start(startOptions);
 }
