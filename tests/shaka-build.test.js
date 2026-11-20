@@ -8,7 +8,7 @@ test('vendored build matches the pinned patch, helper and compiler lockfile', ()
   const root = path.resolve(__dirname, '../vendor/shaka');
   const manifest = JSON.parse(fs.readFileSync(path.join(root, 'build.json')));
   assert.equal(manifest.upstream, '889d6b76de168e75bb306c5ad442d7a79ee09e68');
-  assert.equal(manifest.version, 'v4.16.45-portage1');
+  assert.equal(manifest.version, 'v4.16.45-portage2');
   for (const [name, expected] of Object.entries(manifest.sha256)) {
     assert.equal(createHash('sha256').update(fs.readFileSync(path.join(root, name))).digest('hex'), expected, name + ': rebuild the player after changing its source');
   }

@@ -81,14 +81,45 @@ test('pause holds pending bytes; resume continues without a reload or lost tail'
   assert.equal(total, 100000); assert.equal(f.timers.size, 0);
 });
 
-test('playing without buffer progress pauses and reports once, retaining this stream', async () => {
+test('playing without buffer progress reports once and preserves play intent', async () => {
   const f = fixture();
   const pending = f.budget.append(new Uint8Array(1), async () => { throw f.quota(); }, 0);
   await f.flush(); await f.tick(15000);
-  assert.equal(f.video.paused, true); assert.deepEqual(f.events, ['portagebufferpressure', 'portagebufferfull']);
+  assert.equal(f.video.paused, false); assert.deepEqual(f.events, ['portagebufferpressure', 'portagebufferfull']);
   await f.tick(60000); assert.equal(f.events.length, 2);
   const cancelled = assert.rejects(pending, e => e.code === 7001);
   f.budget.cancel(); await cancelled; assert.equal(f.timers.size, 0);
+});
+
+test('quota can reclaim played media and retry only the unaccepted tail', async () => {
+  const f = fixture(); let accepted = 0, room = false, recoveries = 0;
+  const bytes = new Uint8Array(5 * 1024 * 1024).fill(13);
+  await f.budget.append(bytes, async piece => {
+    assert.equal(piece.byteOffset, accepted);
+    if (accepted && !room) throw f.quota();
+    accepted += piece.length;
+  }, 0, async () => { recoveries++; room = true; return true; });
+  assert.equal(recoveries, 1); assert.equal(accepted, bytes.length);
+  assert.equal(f.timers.size, 0); assert.equal(f.video.paused, false);
+});
+
+test('unsuccessful eviction waits rather than spinning or changing play state', async () => {
+  const f = fixture(); let recoveries = 0;
+  const pending = f.budget.append(new Uint8Array(1), async () => {throw f.quota();}, 0,
+    async () => { recoveries++; return false; });
+  await f.flush(); assert.equal(recoveries, 1); assert.equal(f.timers.size, 1);
+  await f.tick(); assert.equal(recoveries, 2);
+  const cancelled = assert.rejects(pending, e => e.code === 7001);
+  f.budget.cancel(); await cancelled;
+});
+
+test('seek during asynchronous eviction cancels the old bytes before retry', async () => {
+  const f = fixture(); let finishEviction, appends = 0;
+  const pending = f.budget.append(new Uint8Array(1), async () => {appends++; throw f.quota();}, 0,
+    () => new Promise(resolve => {finishEviction = resolve;}));
+  await f.flush(); const cancelled = assert.rejects(pending, e => e.code === 7001);
+  f.budget.cancel(); finishEviction(true); await cancelled;
+  assert.equal(appends, 1); assert.equal(f.video.paused, false);
 });
 
 test('advancing playback resets the no-progress deadline', async () => {

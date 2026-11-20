@@ -12,14 +12,21 @@ The source patch adds bounded appends inside Shaka's MediaSourceEngine operation
 queue. Each native `updateend` completes one slice. A rejected quota slice is
 retried at a smaller size (4 MiB down to 64 KiB), then held until playback frees
 capacity. Accepted bytes are never retried within an append. There are no fake
-SourceBuffer events, timestamp changes, codec substitutions, quality reductions,
-manual buffer eviction or automatic stream reloads.
+SourceBuffer events, timestamp changes, codec substitutions, quality reductions
+or automatic stream reloads.
+
+While an append waits for space, it asks StreamingEngine to reclaim already
+played media through Shaka's existing removal queue. It keeps at least the
+manifest's maximum segment duration behind the playhead to protect keyframe
+dependencies. The usual eviction ran only before each complete segment, so a
+pending partial append could otherwise wait forever with played data retained.
 
 Seeking, clearing, resetting and destroying cancel pending appends. A cancelled
 partial MP4 append aborts its native parser through the same operation queue
 before Shaka retries or clears it. Quota pressure cancels the receiver's startup
-fallback watchdog. If playing makes no progress for 15 seconds, the player pauses
-and sends a notice; it retains the current stream for an explicit resume or seek.
+fallback watchdog. If playing makes no progress for 15 seconds, the player sends
+one notice and retains the stream. It preserves the user's play/pause intent,
+so seeking out of the blocked range resumes normally without a pause/play toggle.
 An ordinary user pause can retain the pending append indefinitely.
 
 This helps large segments fit incrementally. It cannot make an undecodable
@@ -67,6 +74,11 @@ receiver page, sends LOAD while the pinned player is still downloading, and
 checks decoded frames on both that load and a repeat load. It fetches the current
 CAF SDK, or reads `CAF_SCRIPT` when set to a saved SDK file. This catches loader
 integration failures that direct Shaka tests cannot detect.
+
+`quota-eviction.browser.js` models a renderer that needs explicit removal of
+played data before accepting more bytes. It verifies actual MSE removal and
+frame progress, then forces an unrecoverable quota wait and checks that a seek
+recovers without an extra play command. An intentional user pause stays paused.
 
 A separate local replay of the original Moomin segments reproduced stock
 4.16.45 failing at 65.38 seconds with MEDIA.QUOTA_EXCEEDED_ERROR (3017). This build

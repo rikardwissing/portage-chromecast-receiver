@@ -40,6 +40,6 @@ test('CAF owns loading the vendored player so its readiness promise can settle',
   });
   assert.notEqual(options.skipShakaLoad, true); assert.equal(options.useShakaForHls, true);
   assert.notEqual(options.skipPlayersLoad, true);
-  assert.equal(options.shakaUrl, 'https://receiver.example/subdirectory/vendor/shaka/shaka-player.portage.js?v=2026-11-20.1');
+  assert.equal(options.shakaUrl, 'https://receiver.example/subdirectory/vendor/shaka/shaka-player.portage.js?v=2026-11-20.4');
   assert.equal(options.shakaVersion, '4.16.45');
 });
