@@ -24,6 +24,15 @@ For muxed streams split into separate native buffers, eviction starts at the
 oldest audio or video timestamp. Independent native video eviction must not
 leave older audio outside every subsequent removal range.
 
+For split H.264/HEVC in segments mode, the transmuxer also reports independent
+pictures from the encoded NAL units. The pinned player's `TransmuxerOutput`
+extension carries these timestamps without changing the media bytes. Eviction
+ends just before a verified random access point behind the playhead. Container
+sync flags and short HLS segments alone do not bound an open GOP: native MSE
+removal can otherwise extend to the next IDR and delete unplayed video. Other
+transmuxers retain Shaka's segment-duration guard. Seek clears still clear the
+requested range, and formats or quality are never changed for buffer recovery.
+
 Seeking outside buffered media, clearing A/V, resetting and destroying cancel
 pending appends. Buffered seeks and subtitle clearing leave them running: a
 player-generated gap hop must not abort a partial append and replay the segment.
@@ -90,6 +99,10 @@ recovers without an extra play command. An intentional user pause stays paused.
 quota pressure until the corresponding audio is actually removed. It exercises
 Shaka's split muxed path with native audio and video SourceBuffers and checks
 continued playback without replacing the source.
+
+`open-gop-eviction.browser.js` generates short copied HLS segments with 12-second
+IDR intervals. It checks that actual removals align with independent pictures,
+not ordinary intra-frame sync flags, while frames continue on the same source.
 
 A separate local replay of the original Moomin segments reproduced stock
 4.16.45 failing at 65.38 seconds with MEDIA.QUOTA_EXCEEDED_ERROR (3017). This build

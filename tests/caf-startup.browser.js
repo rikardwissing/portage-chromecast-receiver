@@ -85,7 +85,7 @@ test('CAF starts copied HLS and preserves encoded timestamps across rounded play
         const video = document.querySelector('cast-media-player').shadowRoot.querySelector('video');
         return video.currentTime > start + 4 && video.getVideoPlaybackQuality().totalVideoFrames > 75 && !video.paused;
       }, start, {timeout: 12000});
-      assert.equal(await page.evaluate(() => shaka.Player.version), 'v4.16.45-portage4');
+      assert.equal(await page.evaluate(() => shaka.Player.version), 'v4.16.45-portage5');
       const offsets = await page.evaluate(() => window.offsetWrites);
       assert.ok(offsets.every(value => Math.abs(value) < 0.001),
         'continuous media must not be retimed at each rounded playlist boundary: ' + offsets);
