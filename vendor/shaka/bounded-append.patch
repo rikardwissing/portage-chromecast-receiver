@@ -1,5 +1,32 @@
+diff --git a/externs/shaka/transmuxer.js b/externs/shaka/transmuxer.js
+index 4ef683b..a48cc63 100644
+--- a/externs/shaka/transmuxer.js
++++ b/externs/shaka/transmuxer.js
+@@ -63,17 +63,21 @@ shaka.extern.Transmuxer = class {
+ 
+ 
+ /**
+  * @typedef {{
+  *   data: !Uint8Array,
+- *   init: ?Uint8Array
++ *   init: ?Uint8Array,
++ *   randomAccessPoints: (Array<number>|undefined)
+  * }}
+  *
+  * @property {!Uint8Array} data
+  *   Segment data.
+  * @property {?Uint8Array} init
+  *   Init segment data.
++ * @property {Array<number>|undefined} randomAccessPoints
++ *   Portage extension: encoded presentation times of independent pictures.
++ *   An empty array means the segment contains no independent picture.
+  * @exportDoc
+  */
+ shaka.extern.TransmuxerOutput;
+ 
+ 
 diff --git a/lib/media/media_source_engine.js b/lib/media/media_source_engine.js
-index 3ec9275..2ce89b8 100644
+index 3ec9275..d50b6b0 100644
 --- a/lib/media/media_source_engine.js
 +++ b/lib/media/media_source_engine.js
 @@ -11,10 +11,11 @@ goog.require('shaka.log');
@@ -14,7 +41,7 @@ index 3ec9275..2ce89b8 100644
  goog.require('shaka.media.TimeRangesUtils');
  goog.require('shaka.text.TextEngine');
  goog.require('shaka.transmuxer.TransmuxerEngine');
-@@ -108,10 +109,29 @@ shaka.media.MediaSourceEngine = class {
+@@ -108,10 +109,31 @@ shaka.media.MediaSourceEngine = class {
      this.queues_ = new Map();
  
      /** @private {shaka.util.EventManager} */
@@ -22,6 +49,8 @@ index 3ec9275..2ce89b8 100644
  
 +    /** @private {!shaka.media.AppendBudget} */
 +    this.appendBudget_ = new shaka.media.AppendBudget(video);
++    /** @private {!Map<string, !Array<number>>} */
++    this.randomAccessPoints_ = new Map();
 +    if (video) {
 +      this.eventManager_.listen(video, 'seeking', () => {
 +        // Buffered seeks (including the player's own gap hops) do not need
@@ -44,7 +73,7 @@ index 3ec9275..2ce89b8 100644
                           !shaka.extern.Transmuxer>} */
      this.transmuxers_ = new Map();
  
-@@ -410,10 +430,11 @@ shaka.media.MediaSourceEngine = class {
+@@ -410,10 +432,11 @@ shaka.media.MediaSourceEngine = class {
      return this.destroyer_.destroy();
    }
  
@@ -56,7 +85,39 @@ index 3ec9275..2ce89b8 100644
      const cleanup = [];
  
      for (const [key, q] of this.queues_) {
-@@ -1188,16 +1209,18 @@ shaka.media.MediaSourceEngine = class {
+@@ -754,10 +777,31 @@ shaka.media.MediaSourceEngine = class {
+     }
+     return shaka.media.TimeRangesUtils.bufferStart(
+         this.getBuffered_(contentType));
+   }
+ 
++  /**
++   * Snap eviction to a known independent picture, so native coded-frame
++   * removal cannot advance to a random access point beyond the playhead.
++   * @param {shaka.util.ManifestParserUtils.ContentType} contentType
++   * @param {number} end Normal eviction boundary for unknown formats.
++   * @param {number} maximumEnd Latest permissible independent picture.
++   * @return {number}
++   */
++  getSafeRemovalEnd(contentType, end, maximumEnd) {
++    const points = this.randomAccessPoints_.get(contentType);
++    if (!points) return end;
++    let safe = 0;
++    for (const point of points) {
++      if (point <= maximumEnd) safe = point;
++      else break;
++    }
++    // Stay just before the boundary so timescale rounding cannot select
++    // the following independent picture instead.
++    return Math.max(0, safe - 0.001);
++  }
++
+   /**
+    * Gets the last timestamp in buffer for the given content type.
+    *
+    * @param {shaka.util.ManifestParserUtils.ContentType} contentType
+    * @return {?number} The timestamp in seconds, or null if nothing is buffered.
+@@ -1188,16 +1232,18 @@ shaka.media.MediaSourceEngine = class {
     *   variant(s).
     * @param {boolean=} isChunkedData True if we add to the buffer from the
     *   partial read of the segment.
@@ -76,7 +137,7 @@ index 3ec9275..2ce89b8 100644
      if (contentType == ContentType.TEXT) {
        if (this.manifestType_ == shaka.media.ManifestParser.HLS) {
          // This won't be known until the first video segment is appended.
-@@ -1213,14 +1236,15 @@ shaka.media.MediaSourceEngine = class {
+@@ -1213,22 +1259,25 @@ shaka.media.MediaSourceEngine = class {
      }
  
      if (!fromSplit && this.needSplitMuxedContent_) {
@@ -94,7 +155,38 @@ index 3ec9275..2ce89b8 100644
  
      if (!this.sourceBuffers_.has(contentType)) {
        shaka.log.warning('Attempted to restore a non-existent source buffer');
-@@ -1389,16 +1413,30 @@ shaka.media.MediaSourceEngine = class {
+       return;
+     }
+ 
++    if (!reference) this.randomAccessPoints_.delete(contentType);
++
+     let timestampOffset = this.sourceBuffers_.get(contentType).timestampOffset;
+ 
+     let mimeType = this.sourceBufferTypes_.get(contentType);
+     if (this.transmuxers_.has(contentType)) {
+       mimeType = this.transmuxers_.get(contentType).getOriginalMimeType();
+@@ -1348,10 +1397,20 @@ shaka.media.MediaSourceEngine = class {
+           this.enqueueOperation_(contentType, () => {
+             this.append_(contentType, initData, timestampOffset, stream);
+           }, reference ? reference.getUris()[0] : null);
+         }
+         data = output.data;
++        if (!this.sequenceMode_ && output.randomAccessPoints) {
++          const points = this.randomAccessPoints_.get(contentType) || [];
++          const start = this.bufferStart(contentType);
++          const offset = this.sourceBuffers_.get(contentType).timestampOffset;
++          const next = points.concat(output.randomAccessPoints.map(
++              (point) => point + offset)).filter((point) =>
++            Number.isFinite(point) && (start == null || point >= start));
++          this.randomAccessPoints_.set(contentType,
++              Array.from(new Set(next)).sort((a, b) => a - b).slice(-4096));
++        }
+       }
+     }
+ 
+     data = this.workAroundBrokenPlatforms_(
+         stream, data, reference, contentType);
+@@ -1389,16 +1448,30 @@ shaka.media.MediaSourceEngine = class {
        }
      }
  
@@ -130,7 +222,7 @@ index 3ec9275..2ce89b8 100644
        const bufferedAfter = this.getBuffered_(contentType);
        const newBuffered = shaka.media.TimeRangesUtils.computeAddedRange(
            bufferedBefore, bufferedAfter);
-@@ -1482,10 +1520,12 @@ shaka.media.MediaSourceEngine = class {
+@@ -1482,10 +1555,12 @@ shaka.media.MediaSourceEngine = class {
     * @param {shaka.util.ManifestParserUtils.ContentType} contentType
     * @return {!Promise}
     */
@@ -143,7 +235,7 @@ index 3ec9275..2ce89b8 100644
          return;
        }
        await this.textEngine_.remove(0, Infinity);
-@@ -2151,11 +2191,13 @@ shaka.media.MediaSourceEngine = class {
+@@ -2151,11 +2226,13 @@ shaka.media.MediaSourceEngine = class {
      const next = this.queues_.get(contentType)[0];
      if (next) {
        try {
@@ -158,7 +250,7 @@ index 3ec9275..2ce89b8 100644
                shaka.util.Error.Category.MEDIA,
                shaka.util.Error.Code.QUOTA_EXCEEDED_ERROR,
                contentType));
-@@ -2338,10 +2380,11 @@ shaka.media.MediaSourceEngine = class {
+@@ -2338,11 +2415,13 @@ shaka.media.MediaSourceEngine = class {
    async reset_(streamsByType) {
      if (this.reloadingMediaSource_ || this.usingRemotePlayback_) {
        return;
@@ -166,12 +258,14 @@ index 3ec9275..2ce89b8 100644
      const ContentType = shaka.util.ManifestParserUtils.ContentType;
 +    this.appendBudget_.cancel();
      this.reloadingMediaSource_ = true;
++    this.randomAccessPoints_.clear();
      this.needSplitMuxedContent_ = false;
      const currentTime = this.video_.currentTime;
  
      // When codec switching if the user is currently paused we don't want
+     // to trigger a play when switching codec.
 diff --git a/lib/media/streaming_engine.js b/lib/media/streaming_engine.js
-index 0a0c4d0..465913f 100644
+index 0a0c4d0..fa196bb 100644
 --- a/lib/media/streaming_engine.js
 +++ b/lib/media/streaming_engine.js
 @@ -2769,23 +2769,28 @@ shaka.media.StreamingEngine = class {
@@ -248,7 +342,7 @@ index 0a0c4d0..465913f 100644
  
      const evictionGoal = this.config_.evictionGoal;
  
-@@ -2840,11 +2862,11 @@ shaka.media.StreamingEngine = class {
+@@ -2840,31 +2862,35 @@ shaka.media.StreamingEngine = class {
            'presentationTime=' + presentationTime,
            'bufferedBehind=' + bufferedBehind,
            'bufferBehind=' + bufferBehind,
@@ -261,7 +355,20 @@ index 0a0c4d0..465913f 100644
      shaka.log.v1(logPrefix,
          'buffer behind too large:',
          'presentationTime=' + presentationTime,
-@@ -2861,10 +2883,12 @@ shaka.media.StreamingEngine = class {
+         'bufferedBehind=' + bufferedBehind,
+         'bufferBehind=' + bufferBehind,
+         'evictionGoal=' + evictionGoal,
+         'overflow=' + overflow);
+ 
+-    await this.playerInterface_.mediaSourceEngine.remove(mediaState.type,
+-        startTime, startTime + overflow, continuityTimelines);
++    const endTime = mse.getSafeRemovalEnd(mediaState.type,
++        startTime + overflow, quota ? presentationTime : startTime + overflow);
++    if (endTime <= startTime) return false;
++    await mse.remove(mediaState.type, startTime, endTime, continuityTimelines);
+ 
+     this.destroyer_.ensureNotDestroyed();
+     shaka.log.v1(logPrefix, 'evicted ' + overflow + ' seconds');
  
      if (this.lastTextMediaStateBeforeUnload_) {
        await this.evict_(this.lastTextMediaStateBeforeUnload_, presentationTime);

@@ -35,6 +35,27 @@
     return m[1].split(',').map(function (c) { return c.trim(); }).filter(Boolean);
   }
 
+  // A container sync flag can describe a non-IDR intra picture in an open
+  // GOP. Such a picture is not a safe boundary for coded-frame removal.
+  function independentPicture(sample) {
+    const description = sample.description || {};
+    const config = description.avcC || description.hvcC;
+    if (!config) return null;
+    const bytes = sample.data;
+    if (!bytes) return false;
+    const lengthSize = config.lengthSizeMinusOne + 1;
+    for (let offset = 0; offset + lengthSize < bytes.length;) {
+      let size = 0;
+      for (let i = 0; i < lengthSize; i++) size = size * 256 + bytes[offset + i];
+      offset += lengthSize;
+      if (size <= 0 || offset + size > bytes.length) return false;
+      const type = description.avcC ? bytes[offset] & 31 : (bytes[offset] >> 1) & 63;
+      if (description.avcC ? type === 5 : type >= 16 && type <= 21) return true;
+      offset += size;
+    }
+    return false;
+  }
+
   class Fmp4SplitTransmuxer {
     constructor(mimeType) {
       this.originalMimeType_ = mimeType;
@@ -46,6 +67,8 @@
       this.initReady_ = null;     // promise resolving when trackInit_ exists
       this.lastEnd_ = null;       // last media reference's endTime, for resets
       this.contentType_ = null;
+      this.randomAccessPoints_ = [];
+      this.hasRandomAccessInfo_ = false;
     }
 
     destroy() {
@@ -103,6 +126,9 @@
       const box = MP4Box.createFile();
       this.box_ = box;
       this.nextFileStart_ = 0;
+      this.randomAccessPoints_ = [];
+      this.hasRandomAccessInfo_ = false;
+      const inspected = {};
       this.trackInit_ = null;
       this.initReady_ = new Promise(function (resolve, reject) {
         box.onError = function (e) { reject(new Error('mp4box: ' + e)); };
@@ -128,7 +154,19 @@
         };
       });
       box.onSegment = function (id, user, buffer, sampleNum) {
-        if (user && user.keep) self.pending_.push(new Uint8Array(buffer));
+        if (user && user.keep) {
+          self.pending_.push(new Uint8Array(buffer));
+          if (contentType === 'video') {
+            const track = box.moov.traks.find(function (track) { return track.tkhd.track_id === id; });
+            for (let i = inspected[id] || 0; track && i < sampleNum; i++) {
+              const sample = track.samples[i];
+              const independent = independentPicture(sample);
+              if (independent !== null) self.hasRandomAccessInfo_ = true;
+              if (independent) self.randomAccessPoints_.push(sample.cts / sample.timescale);
+            }
+            inspected[id] = sampleNum;
+          }
+        }
         box.releaseUsedSamples(id, sampleNum);
       };
       const init = this.initBytes_.slice(0);
@@ -177,6 +215,11 @@
       const out = new Uint8Array(total);
       let off = 0;
       for (let i = 0; i < parts.length; i++) { out.set(parts[i], off); off += parts[i].byteLength; }
+      if (contentType === 'video' && this.hasRandomAccessInfo_) {
+        const points = this.randomAccessPoints_;
+        this.randomAccessPoints_ = [];
+        return {data: out, init: null, randomAccessPoints: points};
+      }
       return out;
     }
   }
