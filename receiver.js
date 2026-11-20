@@ -1062,6 +1062,7 @@ if (!PREVIEW) {
   }
   let loadWatch = null;
   function clearLoadWatch() { if (loadWatch) { clearTimeout(loadWatch); loadWatch = null; } }
+  window.tvHelpers.bufferPressure = clearLoadWatch;
   // Buffer pressure is not a decode refusal. Do not let the startup watchdog
   // ask the sender to replace the selected stream while the append is pending.
   document.addEventListener('portagebufferpressure', (event) => {
