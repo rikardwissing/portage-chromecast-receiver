@@ -1062,6 +1062,20 @@ if (!PREVIEW) {
   }
   let loadWatch = null;
   function clearLoadWatch() { if (loadWatch) { clearTimeout(loadWatch); loadWatch = null; } }
+  window.tvHelpers.bufferPressure = clearLoadWatch;
+  // Buffer pressure is not a decode refusal. Do not let the startup watchdog
+  // ask the sender to replace the selected stream while the append is pending.
+  document.addEventListener('portagebufferpressure', (event) => {
+    const path = event.composedPath ? event.composedPath() : [event.target];
+    if (path.indexOf(mediaElement()) >= 0) clearLoadWatch();
+  });
+  document.addEventListener('portagebufferfull', (event) => {
+    const path = event.composedPath ? event.composedPath() : [event.target];
+    if (path.indexOf(mediaElement()) < 0) return;
+    clearLoadWatch();
+    slog('media buffer stayed full: paused with the current stream retained');
+    tellSenders({ type: 'notice', reason: 'The TV’s media buffer is full. Try seeking or resuming playback.' });
+  });
   function armLoadWatch() {
     clearLoadWatch();
     loadWatch = setTimeout(() => {
@@ -1473,13 +1487,8 @@ if (!PREVIEW) {
   // chance of simply playing. Revert this option if package casts regress.
   const startOptions = new cast.framework.CastReceiverOptions();
   startOptions.useShakaForHls = true;
-  // The device firmware's CAF defaulted to Shaka 4.9.2-caf2 (seen in error
-  // stacks) - years behind the documented 4.15.56 default, and Google's own
-  // migration guide says Shaka-for-HLS should pin >=4.15.56. 4.16.45 is the
-  // newest 4.x LTS inside the supported range (>=2.5.6 <5.0.0) and carries
-  // the mediaCapabilities-based variant filtering that judges a muxed
-  // variant's audio and video SEPARATELY - the exact check our muxed Dolby
-  // stream failed under 4.9's combined-string logic (Shaka 4032).
-  startOptions.shakaVersion = '4.16.45';
+  // Preloaded, pinned 4.16.45 with bounded appends in its operation queue.
+  // CAF must use that build, including for DASH. See vendor/shaka/README.md.
+  startOptions.skipShakaLoad = true;
   context.start(startOptions);
 }
