@@ -957,6 +957,7 @@ if (!PREVIEW) {
     stats.viewportWidth = Math.round(window.innerWidth || 0);
     stats.viewportHeight = Math.round(window.innerHeight || 0);
     stats.pixelRatio = window.devicePixelRatio || 1;
+    if (playbackHealth.presented !== null) stats.presentedFrames = playbackHealth.presented;
     const element = playingElement();
     const anyElement = element || mediaElement();
     if (!element && anyElement && typeof anyElement.getVideoPlaybackQuality === 'function') {
@@ -1096,6 +1097,24 @@ if (!PREVIEW) {
     const shaka = err.shakaErrorCode || (err.category === 4 ? err.code : 0);
     return shaka === 4032 || code === 102 || code === 104 || code === 110;
   }
+  let healthFrameRate = null;
+  const playbackHealth = new PortagePlaybackHealth.Observer({
+    video: mediaElement,
+    state: () => playerManager.getPlayerState(),
+    expectedFPS: () => {
+      if (healthFrameRate) return healthFrameRate;
+      try {
+        const stats = playerManager.getStats && playerManager.getStats();
+        return stats && stats.frameRate;
+      } catch (error) { return null; }
+    },
+    notify: reason => {
+      slog('playback trouble: ' + reason + '; offering settings without changing playback');
+      tellSenders({type: 'notice', code: 'playbackTrouble',
+        reason: 'Video or audio not playing smoothly? Try adjusting quality settings.'});
+    },
+  });
+  setInterval(() => playbackHealth.tick(), 1000);
   let bufferFullReported = false;
   let loadWatch = null;
   function clearLoadWatch() { if (loadWatch) { clearTimeout(loadWatch); loadWatch = null; } }
@@ -1142,9 +1161,11 @@ if (!PREVIEW) {
   playerManager.setMessageInterceptor(messages.MessageType.LOAD, (request) => {
     teardownEngine();
     bufferFullReported = false;
+    playbackHealth.reset();
     clearSteppingDown();
     const media = request.media || {};
     const custom = media.customData || {};
+    healthFrameRate = Number(custom.frameRate) || null;
     const isReissue = reissuing;
     reissuing = false;
     loadHeight = Number(custom.videoHeight) || 0;
@@ -1393,6 +1414,7 @@ if (!PREVIEW) {
   // demux-error-on-immediate-recast pattern). Release at the moment playback
   // actually ends.
   playerManager.setMessageInterceptor(messages.MessageType.STOP, (request) => {
+    playbackHealth.reset();
     clearAudioCheck();
     loadAudioCodec = null;
     UpNext.hide();
@@ -1405,6 +1427,7 @@ if (!PREVIEW) {
 
   // SEEK: CAF moves the media element; the engine must move the demux too.
   playerManager.setMessageInterceptor(messages.MessageType.SEEK, (request) => {
+    playbackHealth.seek();
     if (engine && typeof request.currentTime === 'number') {
       engine.reposition(request.currentTime);
     }

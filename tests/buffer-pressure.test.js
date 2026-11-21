@@ -16,7 +16,7 @@ test('native buffer pressure cannot trigger startup fallback, reload or format r
     document: {addEventListener(name, handler) { handlers[name] = handler; }},
     mediaElement: () => active, clearLoadWatch: () => cleared++, slog() {},
     tellSenders: message => sent.push(JSON.parse(JSON.stringify(message))),
-    teardownEngine() {}, clearSteppingDown() {},
+    teardownEngine() {}, clearSteppingDown() {}, playbackHealth: {reset() {}},
   });
   vm.runInContext(receiver.slice(start, end).replace(/  let loadWatch = null;[\s\S]*?window\.tvHelpers\.bufferPressure = clearLoadWatch;/, ''), context);
   handlers.portagebufferpressure({composedPath: () => [active, {}]});

@@ -12,7 +12,7 @@ const {chromium} = require('playwright-core');
 const root = path.resolve(__dirname, '..');
 const sdk = 'https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js';
 
-test('CAF starts copied HLS and preserves encoded timestamps across rounded playlist durations', {timeout: 60000}, async () => {
+test('CAF starts copied HLS and preserves encoded timestamps across rounded playlist durations', {timeout: 90000}, async () => {
   const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'portage-caf-'));
   let browser, server;
   try {
@@ -22,7 +22,7 @@ test('CAF starts copied HLS and preserves encoded timestamps across rounded play
     })();
     const result = spawnSync(process.env.FFMPEG || 'ffmpeg', [
       '-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=size=320x180:rate=25',
-      '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '16',
+      '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-t', '45',
       '-c:v', 'libx264', '-preset', 'medium', '-pix_fmt', 'yuv420p', '-g', '50', '-bf', '3',
       '-c:a', 'aac', '-b:a', '128k', '-f', 'hls', '-hls_time', '2', '-hls_playlist_type', 'vod',
       '-hls_segment_type', 'fmp4', '-hls_segment_filename', path.join(fixture, 'segment-%d.m4s'),
@@ -68,18 +68,35 @@ test('CAF starts copied HLS and preserves encoded timestamps across rounded play
     page.on('request', r => {if (/shaka-player.*\.js/.test(r.url())) playerRequests.push(r.url());});
     await page.addInitScript(() => {
       window.offsetWrites = [];
+      // Keep real decoding/playback, but model the field symptom: the
+      // compositor presents one frame per second while the media clock moves.
+      const frame = HTMLVideoElement.prototype.requestVideoFrameCallback;
+      HTMLVideoElement.prototype.requestVideoFrameCallback = function (callback) {
+        return frame.call(this, (at, metadata) => callback(at, {...metadata,
+          presentedFrames: Math.floor(metadata.mediaTime)}));
+      };
       const native = Object.getOwnPropertyDescriptor(SourceBuffer.prototype, 'timestampOffset');
       Object.defineProperty(SourceBuffer.prototype, 'timestampOffset', {...native,
         set(value) {native.set.call(this, value);window.offsetWrites.push(value);}});
     });
     await page.goto(`http://127.0.0.1:${server.address().port}/`, {waitUntil: 'domcontentloaded'});
+    await page.evaluate(() => {
+      const context = cast.framework.CastReceiverContext.getInstance();
+      const manager = context.getPlayerManager();
+      window.advisories = []; window.playbackCommands = [];
+      context.sendCustomMessage = (_, __, message) => { window.advisories.push(message); };
+      for (const method of ['load', 'stop']) {
+        const original = manager[method].bind(manager);
+        manager[method] = (...args) => {window.playbackCommands.push(method); return original(...args);};
+      }
+    });
     for (const start of [0, 6]) {
       await page.evaluate(({start, codecs}) => {
         window.offsetWrites = [];
         const manager = cast.framework.CastReceiverContext.getInstance().getPlayerManager();
         manager.load({type: 'LOAD', requestId: start + 1, autoplay: true, currentTime: start,
           media: {contentId: location.origin + '/master.m3u8', contentType: 'application/vnd.apple.mpegurl',
-            streamType: 'BUFFERED', customData: {madeStream: true, copiedPicture: true, streamCodecs: codecs, streamContainer: 'fmp4'}}});
+            streamType: 'BUFFERED', customData: {frameRate: 25, madeStream: true, copiedPicture: true, streamCodecs: codecs, streamContainer: 'fmp4'}}});
       }, {start, codecs});
       await page.waitForFunction(start => {
         const video = document.querySelector('cast-media-player').shadowRoot.querySelector('video');
@@ -89,6 +106,22 @@ test('CAF starts copied HLS and preserves encoded timestamps across rounded play
       const offsets = await page.evaluate(() => window.offsetWrites);
       assert.ok(offsets.every(value => Math.abs(value) < 0.001),
         'continuous media must not be retimed at each rounded playlist boundary: ' + offsets);
+      if (start === 0) {
+        await page.waitForFunction(() => window.advisories.some(m => m.code === 'playbackTrouble'), null, {timeout: 25000});
+        const health = await page.evaluate(() => {
+          const manager = cast.framework.CastReceiverContext.getInstance().getPlayerManager();
+          const video = document.querySelector('cast-media-player').shadowRoot.querySelector('video');
+          return {notices: window.advisories.filter(m => m.code === 'playbackTrouble'),
+            commands: window.playbackCommands, time: video.currentTime, paused: video.paused,
+            media: manager.getMediaInformation()};
+        });
+        assert.deepEqual(health.notices, [{type: 'notice', code: 'playbackTrouble',
+          reason: 'Video or audio not playing smoothly? Try adjusting quality settings.'}]);
+        assert.deepEqual(health.commands, ['load'], 'only the test initiated LOAD; the observer never controls playback');
+        assert.ok(health.time > 15); assert.equal(health.paused, false);
+        assert.equal(health.media.customData.streamCodecs, codecs);
+        assert.ok(health.media.contentId.endsWith('/master.m3u8'));
+      }
       // The real CAF shadow-DOM video must reach the advisory handler without
       // invoking LOAD/STOP or changing the selected stream. The append-budget
       // tests separately exercise the 15-second quota deadline and pause guard.
