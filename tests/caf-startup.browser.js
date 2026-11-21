@@ -89,6 +89,43 @@ test('CAF starts copied HLS and preserves encoded timestamps across rounded play
       const offsets = await page.evaluate(() => window.offsetWrites);
       assert.ok(offsets.every(value => Math.abs(value) < 0.001),
         'continuous media must not be retimed at each rounded playlist boundary: ' + offsets);
+      // The real CAF shadow-DOM video must reach the advisory handler without
+      // invoking LOAD/STOP or changing the selected stream. The append-budget
+      // tests separately exercise the 15-second quota deadline and pause guard.
+      const advisory = await page.evaluate(() => {
+        const context = cast.framework.CastReceiverContext.getInstance();
+        const manager = context.getPlayerManager();
+        const video = document.querySelector('cast-media-player').shadowRoot.querySelector('video');
+        const source = video.currentSrc, media = JSON.stringify(manager.getMediaInformation());
+        const before = video.currentTime;
+        const sent = [], calls = [];
+        const send = context.sendCustomMessage, load = manager.load, stop = manager.stop;
+        context.sendCustomMessage = (namespace, sender, message) => sent.push(message);
+        manager.load = () => calls.push('load');
+        manager.stop = () => calls.push('stop');
+        try {
+          const fire = (target, type) => target.dispatchEvent(new CustomEvent(type, {bubbles: true, composed: true}));
+          const detached = document.createElement('video');
+          document.body.appendChild(detached);
+          fire(detached, 'portagebufferfull'); detached.remove();
+          fire(video, 'portagebufferpressure');
+          const transient = sent.length;
+          fire(video, 'portagebufferfull'); fire(video, 'portagebufferfull');
+          return {sent, transient, calls, before, source, currentSource: video.currentSrc,
+            sameMedia: media === JSON.stringify(manager.getMediaInformation()), paused: video.paused};
+        } finally {
+          context.sendCustomMessage = send; manager.load = load; manager.stop = stop;
+        }
+      });
+      assert.equal(advisory.transient, 0, 'detached events and temporary pressure stay silent');
+      assert.deepEqual(advisory.sent.filter(message => message.type !== 'log'), [{type: 'notice', code: 'bufferFull',
+        reason: 'This receiver’s playback buffer is full. A lower video bitrate may help.'}]);
+      assert.deepEqual(advisory.calls, []);
+      assert.equal(advisory.currentSource, advisory.source);
+      assert.equal(advisory.sameMedia, true, 'URL, selected codec and quality metadata stay intact');
+      assert.equal(advisory.paused, false);
+      await page.waitForFunction(before => document.querySelector('cast-media-player').shadowRoot.querySelector('video').currentTime > before + 0.3,
+        advisory.before, {timeout: 3000});
     }
     assert.equal(playerRequests.length, 1, 'CAF loads the pinned player once, including across repeat LOAD');
     assert.ok(playerRequests[0].includes('/vendor/shaka/shaka-player.portage.js'));
