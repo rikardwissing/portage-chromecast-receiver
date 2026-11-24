@@ -30,7 +30,7 @@ test('open-GOP buffer eviction stops at independent pictures, not playlist bound
       '-hls_segment_filename', 'segment-%d.m4s', 'media.m3u8']);
     server = http.createServer((req, res) => {
       const name = new URL(req.url, 'http://local').pathname;
-      if (name === '/') {res.setHeader('Content-Type', 'text/html');res.end('<video id="v" muted></video><script src="/shaka.js"></script><script src="/mp4box.all.min.js"></script><script>window.__dolbySplitActive=true;</script><script src="/fmp4-split.js"></script>');return;}
+      if (name === '/') {res.setHeader('Content-Type', 'text/html');res.end('<video id="v" muted></video><script src="/shaka.js"></script><script src="/mp4box.all.min.js"></script><script>window.__dolbySplitActive=true;</script><script src="/video-access.js"></script><script src="/fmp4-split.js"></script>');return;}
       const file = name === '/shaka.js' ? (process.env.SHAKA_BUNDLE || path.join(root, 'vendor/shaka/shaka-player.portage.js')) :
         path.join(name.endsWith('.js') ? root : dir, path.basename(name));
       if (!fs.existsSync(file)) {res.writeHead(404);res.end();return;}
