@@ -43,7 +43,6 @@ test('direct header-stripped MKV decodes and seeks without changing source or tr
     assert.equal(encode.status, 0, String(encode.stderr));
     const mkv = strippedFile(fs.readFileSync(fixture));
     server = http.createServer((req, res) => {
-      if (req.url === '/video-access.js') {res.end(fs.readFileSync(path.join(__dirname, '../video-access.js'))); return;}
       if (req.url === '/engine.js') {res.setHeader('Content-Type', 'text/javascript'); res.end(fs.readFileSync(path.join(__dirname, '../mkv-engine.js'))); return;}
       if (req.url === '/source.mkv') {
         const range = /bytes=(\d+)-(\d+)/.exec(req.headers.range || '');
@@ -53,7 +52,7 @@ test('direct header-stripped MKV decodes and seeks without changing source or tr
         res.end(mkv.subarray(from, to + 1)); return;
       }
       res.setHeader('Content-Type', 'text/html');
-      res.end('<video id="v" autoplay></video><script src="/video-access.js"></script><script src="/engine.js"></script><script>window.failures=[];window.engine=new MkvEngine("/source.mkv",0,{getTime:()=>v.currentTime,audioStrict:true});engine.onEngineFailed=e=>failures.push(e);v.src=engine.objectUrl;</script>');
+      res.end('<video id="v" autoplay></video><script src="/engine.js"></script><script>window.failures=[];window.engine=new MkvEngine("/source.mkv",0,{getTime:()=>v.currentTime,audioStrict:true});engine.onEngineFailed=e=>failures.push(e);v.src=engine.objectUrl;</script>');
     });
     await new Promise(r => server.listen(0, '127.0.0.1', r));
     browser = await chromium.launch({channel: 'chrome', headless: true, args: ['--autoplay-policy=no-user-gesture-required']});

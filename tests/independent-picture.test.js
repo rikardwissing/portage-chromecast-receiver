@@ -6,7 +6,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '../fmp4-split.js'), 'utf8');
 const independent = vm.runInNewContext(source.slice(source.indexOf('  function independentPicture('),
-  source.indexOf('  class Fmp4SplitTransmuxer')) + '\nindependentPicture;', {independentNalPicture: require('../video-access.js')});
+  source.indexOf('  class Fmp4SplitTransmuxer')) + '\nindependentPicture;', {independentNalPicture: require('../mkv-engine.js').independentNalPicture});
 function sample(codec, nal, lengthSize = 4) {
   const data = new Uint8Array(lengthSize + 2);data[lengthSize - 1] = 2;data[lengthSize] = nal;
   return {is_sync: true, description: {[codec]: {lengthSizeMinusOne: lengthSize - 1}}, data};
