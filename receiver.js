@@ -1098,6 +1098,7 @@ if (!PREVIEW) {
     return shaka === 4032 || code === 102 || code === 104 || code === 110;
   }
   let healthFrameRate = null;
+  const bufferedStart = new PortagePlaybackHealth.BufferedStart();
   const playbackHealth = new PortagePlaybackHealth.Observer({
     video: mediaElement,
     state: () => playerManager.getPlayerState(),
@@ -1109,26 +1110,41 @@ if (!PREVIEW) {
       } catch (error) { return null; }
     },
     notify: reason => {
+      if (bufferedStart.offered) return;
       slog('playback trouble: ' + reason + '; offering settings without changing playback');
       tellSenders({type: 'notice', code: 'playbackTrouble',
         reason: 'Video or audio not playing smoothly? Try adjusting quality settings.'});
     },
   });
-  setInterval(() => playbackHealth.tick(), 1000);
+  setInterval(() => {
+    if (bufferedStart.id) {
+      const update = bufferedStart.sample(mediaElement(), playerManager.getPlayerState(), performance.now() / 1000, document.hidden);
+      if (update) {
+        if (update.state === 'stalled') clearLoadWatch();
+        tellSenders(Object.assign({type: 'videoStart'}, update));
+      }
+    }
+    playbackHealth.tick();
+  }, 1000);
   let bufferFullReported = false;
   let loadWatch = null;
   function clearLoadWatch() { if (loadWatch) { clearTimeout(loadWatch); loadWatch = null; } }
-  window.tvHelpers.bufferPressure = clearLoadWatch;
+  function bufferPressure() {
+    clearLoadWatch();
+    if (bufferedStart.offered) tellSenders({type: 'videoStart', load: bufferedStart.id, state: 'cleared'});
+    bufferedStart.reset();
+  }
+  window.tvHelpers.bufferPressure = bufferPressure;
   // Buffer pressure is not a decode refusal. Do not let the startup watchdog
   // ask the sender to replace the selected stream while the append is pending.
   document.addEventListener('portagebufferpressure', (event) => {
     const path = event.composedPath ? event.composedPath() : [event.target];
-    if (path.indexOf(mediaElement()) >= 0) clearLoadWatch();
+    if (path.indexOf(mediaElement()) >= 0) bufferPressure();
   });
   document.addEventListener('portagebufferfull', (event) => {
     const path = event.composedPath ? event.composedPath() : [event.target];
     if (path.indexOf(mediaElement()) < 0) return;
-    clearLoadWatch();
+    bufferPressure();
     if (bufferFullReported) return;
     bufferFullReported = true;
     slog('media buffer stayed full: retaining the stream and play/pause intent');
@@ -1165,6 +1181,8 @@ if (!PREVIEW) {
     clearSteppingDown();
     const media = request.media || {};
     const custom = media.customData || {};
+    if (bufferedStart.offered) tellSenders({type: 'videoStart', load: bufferedStart.id, state: 'cleared'});
+    bufferedStart.reset(typeof custom.videoStartID === 'string' ? custom.videoStartID : null, request.currentTime || 0);
     healthFrameRate = Number(custom.frameRate) || null;
     const isReissue = reissuing;
     reissuing = false;
@@ -1415,6 +1433,7 @@ if (!PREVIEW) {
   // actually ends.
   playerManager.setMessageInterceptor(messages.MessageType.STOP, (request) => {
     playbackHealth.reset();
+    bufferedStart.reset();
     clearAudioCheck();
     loadAudioCodec = null;
     UpNext.hide();
@@ -1428,6 +1447,8 @@ if (!PREVIEW) {
   // SEEK: CAF moves the media element; the engine must move the demux too.
   playerManager.setMessageInterceptor(messages.MessageType.SEEK, (request) => {
     playbackHealth.seek();
+    const update = bufferedStart.seek(request.currentTime);
+    if (update) tellSenders(Object.assign({type: 'videoStart'}, update));
     if (engine && typeof request.currentTime === 'number') {
       engine.reposition(request.currentTime);
     }
@@ -1484,7 +1505,7 @@ if (!PREVIEW) {
   });
   playerManager.addEventListener(events.EventType.MEDIA_FINISHED, (e) => {
     const reason = e && e.endedReason;
-    if (reason === events.EndedReason.END_OF_STREAM && Queue.ended()) return;
+    if (reason === events.EndedReason.END_OF_STREAM && (bufferedStart.offered || Queue.ended())) return;
     if (reason !== events.EndedReason.INTERRUPTED) Report.end();
     if (!steppingDown) Screens.show('idle');
   });

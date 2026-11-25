@@ -116,3 +116,61 @@ test('recorded H.264 plus copied Opus trouble is caught with no dropped frames',
   assert.ok(notices[0].at >= 20 && notices[0].at < 35, 'after the startup grace and sustained bad video, before 35 seconds');
   assert.ok(samples.every(s => s.dropped === 0));
 });
+
+const {BufferedStart} = require('../playback-health');
+function startup(at = 0) {
+  const monitor = new BufferedStart(), updates = [];
+  let now = 0;
+  const ranges = [[at, at + 30]];
+  const video = {currentTime: at, readyState: 4, videoWidth: 1920, playbackRate: 1,
+    buffered: {get length() {return ranges.length;}, start: i => ranges[i][0], end: i => ranges[i][1]}};
+  monitor.reset('load', at);
+  return {monitor, updates, ranges, video, tick(n, {advance = 0, state = 'BUFFERING', hidden = false, dt = 1} = {}) {
+    for (let i = 0; i < n; i++) {
+      now += dt;
+      video.currentTime += advance;
+      const update = monitor.sample(video, state, now, hidden);
+      if (update) updates.push(update);
+    }
+  }};
+}
+test('buffered LG startup at zero and at resume with an initial 117 ms clock advance offers a video-only retry once', () => {
+  for (const start of [0, 6, 3900]) {
+    const t = startup(start);
+    t.tick(1, {state: 'PLAYING'}); t.video.currentTime += 0.117;
+    t.tick(12); assert.deepEqual(t.updates, []);
+    t.tick(50); assert.deepEqual(t.updates, [{load: 'load', state: 'stalled', position: start + 0.117}]);
+    t.tick(4, {advance: 1, state: 'PLAYING'});
+    assert.deepEqual(t.updates[1], {load: 'load', state: 'playing'});
+    t.tick(30); assert.equal(t.updates.length, 2);
+  }
+});
+test('startup evidence requires contiguous buffered video at the clock and an uninterrupted attempt to play', () => {
+  for (const field of ['paused', 'ended', 'seeking', 'hidden', 'audioOnly', 'idle', 'notReady', 'rate', 'short', 'gap', 'suspended']) {
+    const t = startup();
+    t.tick(9);
+    if (field === 'short') t.ranges[0][1] = 1;
+    if (field === 'gap') t.ranges[0][0] = 0.5;
+    if (field === 'audioOnly') t.video.videoWidth = 0;
+    if (field === 'notReady') t.video.readyState = 1;
+    if (field === 'rate') t.video.playbackRate = 0;
+    t.video[field] = true;
+    t.tick(20, {hidden: field === 'hidden', state: field === 'idle' ? 'IDLE' : 'BUFFERING', dt: field === 'suspended' ? 8 : 1});
+    t.ranges[0] = [0, 30]; Object.assign(t.video, {[field]: false, videoWidth: 1920, readyState: 4, playbackRate: 1});
+    t.tick(8); assert.deepEqual(t.updates, [], field);
+    t.tick(5, {advance: 1}); t.tick(30); assert.deepEqual(t.updates, [], field);
+  }
+});
+test('startup detection follows load/seek lifetime and ignores mid-playback stalls', () => {
+  const t = startup();
+  t.tick(9);
+  t.monitor.seek(100); t.video.currentTime = 100; t.ranges[0] = [100, 130];
+  t.tick(9); assert.deepEqual(t.updates, []);
+  t.monitor.reset('next', 100); t.tick(10); assert.deepEqual(t.updates, []);
+  t.tick(8); assert.equal(t.updates[0].load, 'next');
+  assert.deepEqual(t.monitor.seek(200), {load: 'next', state: 'cleared'});
+  t.monitor.reset(); t.tick(60); assert.equal(t.updates.length, 1);
+  const healthy = startup(10);
+  healthy.tick(18, {advance: 0.5}); healthy.tick(60);
+  assert.deepEqual(healthy.updates, []);
+});

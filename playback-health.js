@@ -1,6 +1,75 @@
 // Advisory only: this observer never controls playback or selects a format.
 (function (root) {
   'use strict';
+  function bufferAhead(video) {
+    const ranges = video.buffered, at = video.currentTime;
+    for (let i = 0; ranges && i < ranges.length; i++) {
+      if (ranges.start(i) <= at && at < ranges.end(i)) return ranges.end(i) - at;
+    }
+    return 0;
+  }
+
+  class BufferedStart {
+    constructor() { this.reset(); }
+    reset(id, startAt = 0) {
+      this.id = id;
+      this.origin = startAt;
+      this.offered = false;
+      this.interrupt();
+    }
+    interrupt() {
+      this.previous = null;
+      this.stillSince = null;
+      this.advance = 0;
+      this.movingSamples = 0;
+    }
+    seek(pos) {
+      this.interrupt();
+      this.origin = pos;
+      if (!this.offered) return null;
+      const message = {load: this.id, state: 'cleared'};
+      this.offered = false;
+      return message;
+    }
+    sample(video, state, now, hidden) {
+      if (!this.id) return null;
+      if (!video || hidden || video.paused || video.seeking || video.ended || video.playbackRate <= 0 ||
+          (state !== 'PLAYING' && state !== 'BUFFERING') || !Number.isFinite(video.currentTime)) {
+        this.interrupt();
+        return null;
+      }
+      const pos = video.currentTime, last = this.previous;
+      this.previous = {now, pos};
+      if (!last) return null;
+      const dt = now - last.now, advance = pos - last.pos;
+      if (dt <= 0 || dt > 4 || advance < -0.05 || advance > dt * video.playbackRate + 2) {
+        this.origin = pos;
+        this.interrupt();
+        return null;
+      }
+      if (advance > 0.02) {
+        this.advance += advance;
+        this.movingSamples++;
+      }
+      if (this.advance >= 1 && this.movingSamples >= 2) {
+        const result = this.offered ? {load: this.id, state: 'playing'} : null;
+        this.reset();
+        return result;
+      }
+      if (!(video.videoWidth > 0 && video.readyState >= 2) || bufferAhead(video) < 5 ||
+          Math.abs(pos - this.origin) > 0.25) {
+        this.origin = pos;
+        this.stillSince = null;
+      } else if (this.stillSince === null) {
+        this.stillSince = now;
+      } else if (!this.offered && now - this.stillSince >= 12) {
+        this.offered = true;
+        return {load: this.id, state: 'stalled', position: pos};
+      }
+      return null;
+    }
+  }
+
   class Monitor {
     constructor() { this.reset(); }
     reset() {
@@ -132,7 +201,7 @@
       if (reason) this.notify(reason);
     }
   }
-  const api = {Monitor, Observer};
+  const api = {Monitor, Observer, BufferedStart};
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.PortagePlaybackHealth = api;
 })(typeof globalThis !== 'undefined' ? globalThis : window);
