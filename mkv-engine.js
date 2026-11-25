@@ -458,15 +458,18 @@ MkvDemuxer.prototype.findClusters = function (u8, base, totalBytes) {
   return found;
 };
 
-MkvDemuxer.prototype.parseClusterBody_ = function (r, onSample) {
+MkvDemuxer.prototype.parseClusterBody_ = function (r, onSample, partial) {
   var clusterTicks = 0;
   while (r.remaining() > 1) {
     var id = r.readVint(true); var size = r.readVint(false);
-    if (!id || !size || size.unknown || r.remaining() < size.value) break;
+    if (!id || !size || size.unknown) break;
+    var cut = r.remaining() < size.value;
+    if (cut && !(partial && (id.value === MKV_ID.SimpleBlock || id.value === MKV_ID.BlockGroup))) break;
+    var emit = cut ? function (number, raw) { raw.truncated = true; onSample(number, raw); } : onSample;
     if (id.value === MKV_ID.Timestamp) {
       clusterTicks = r.readUint(size.value);
     } else if (id.value === MKV_ID.SimpleBlock) {
-      this.parseBlock_(r.readBytes(size.value), clusterTicks, null, onSample);
+      this.parseBlock_(r.readBytes(size.value), clusterTicks, null, emit);
     } else if (id.value === MKV_ID.BlockGroup) {
       var g = new MkvByteReader(r.readBytes(size.value), 0);
       var blockBytes = null, hasReference = false, durationTicks = null;
@@ -480,10 +483,11 @@ MkvDemuxer.prototype.parseClusterBody_ = function (r, onSample) {
           g.pos += gsize.value;
         }
       }
-      if (blockBytes) this.parseBlock_(blockBytes, clusterTicks, !hasReference, onSample, durationTicks);
+      if (blockBytes) this.parseBlock_(blockBytes, clusterTicks, !hasReference, emit, durationTicks);
     } else {
       r.pos += size.value;
     }
+    if (cut) break;
   }
 };
 
@@ -1157,14 +1161,14 @@ function mkvRangeTotal(text) {
 }
 
 // AVC and HEVC samples in Matroska and MP4 use length-prefixed NAL units.
-function independentNalPicture(bytes, lengthSize, avc) {
+function independentNalPicture(bytes, lengthSize, avc, truncated) {
   if (!bytes) return false;
   if (!(lengthSize >= 1 && lengthSize <= 4)) return false;
   for (var offset = 0; offset + lengthSize < bytes.length;) {
     var size = 0;
     for (var i = 0; i < lengthSize; i++) size = size * 256 + bytes[offset + i];
     offset += lengthSize;
-    if (size <= 0 || offset + size > bytes.length) return false;
+    if (size <= 0 || offset >= bytes.length || (!truncated && offset + size > bytes.length)) return false;
     var type = avc ? bytes[offset] & 31 : (bytes[offset] >> 1) & 63;
     if (avc ? type === 5 : type >= 16 && type <= 21) return true;
     offset += size;
@@ -1185,7 +1189,7 @@ function mkvAccessConfig(track) {
 function mkvNoteAccess(lane, raw, offset) {
   if (!lane.access || !raw.keyframe) return false;
   var known = lane.clusterAccess;
-  var independent = independentNalPicture(raw.data, lane.access.length, lane.access.avc);
+  var independent = independentNalPicture(raw.data, lane.access.length, lane.access.avc, raw.truncated);
   if (independent && (known[offset] == null || raw.ptsMs < known[offset])) known[offset] = raw.ptsMs;
   return independent;
 }
@@ -1699,11 +1703,12 @@ MkvEngine.prototype.decodeOffset_ = function (ms, lane, gen, target) {
     var id = r.readVint(true), size = id && r.readVint(false);
     if (size && !size.unknown && id.value === MKV_ID.Cluster) {
       var body = bytes.subarray(r.pos, r.pos + size.value);
-      demux.parseClusterBody_(new MkvByteReader(body, 0), function (number, raw) { note(number, raw, offset); });
+      try {
+        demux.parseClusterBody_(new MkvByteReader(body, 0), function (number, raw) { note(number, raw, offset); }, true);
+      } catch (e) {}
     }
     var access = cached();
     if (access != null) return access;
-    // Probe earlier cues in a single bounded read, then use the requested Matroska cue.
     var first = target;
     while (first > earliest && cues[first - 1].clusterOffset <= offset &&
            offset - cues[first - 1].clusterOffset <= 2 * 1024 * 1024) first--;
