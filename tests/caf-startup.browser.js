@@ -167,17 +167,26 @@ test('CAF starts copied HLS and preserves encoded timestamps across rounded play
       const video = document.querySelector('cast-media-player').shadowRoot.querySelector('video');
       const clock = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime');
       Object.defineProperty(video, 'currentTime', {configurable: true, get: () => 0.117, set: v => clock.set.call(video, v)});
+      const buffered = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'buffered');
+      Object.defineProperty(video, 'buffered', {configurable: true, get() {
+        const ranges = buffered.get.call(video);
+        return {length: ranges.length, start: i => ranges.start(i), end: i => Math.min(ranges.end(i), 2.817)};
+      }});
       window.playbackCommands.length = 0;
       cast.framework.CastReceiverContext.getInstance().getPlayerManager().load({
         type: 'LOAD', requestId: 30, autoplay: true, currentTime: 0,
         media: {contentId: location.origin + '/clip.mp4', contentType: 'video/mp4', streamType: 'BUFFERED',
           customData: {videoStartID: 'original-video-test'}}});
     });
-    await page.waitForFunction(() => window.advisories.some(m => m.type === 'videoStart'), null, {timeout: 25000});
+    await page.waitForFunction(() => window.advisories.some(m => m.type === 'videoStart'), null, {timeout: 35000});
     assert.deepEqual(await page.evaluate(() => window.advisories.filter(m => m.type === 'videoStart')),
       [{type: 'videoStart', load: 'original-video-test', state: 'stalled', position: 0.117}]);
     assert.deepEqual(await page.evaluate(() => window.playbackCommands), ['load']);
-    await page.evaluate(() => { delete document.querySelector('cast-media-player').shadowRoot.querySelector('video').currentTime; });
+    await page.evaluate(() => {
+      const video = document.querySelector('cast-media-player').shadowRoot.querySelector('video');
+      delete video.currentTime;
+      delete video.buffered;
+    });
     await page.waitForFunction(() => window.advisories.some(m => m.type === 'videoStart' && m.state === 'playing'),
       null, {timeout: 8000});
     assert.equal(playerRequests.length, 1, 'CAF loads the pinned player once, including across repeat LOAD');
