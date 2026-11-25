@@ -13,12 +13,13 @@ test('native buffer pressure cannot trigger startup fallback, reload or format r
   const start = receiver.indexOf('  let bufferFullReported = false;');
   const end = receiver.indexOf('  function armLoadWatch()', start);
   const context = vm.createContext({
+    window: {tvHelpers: {}}, bufferedStart: new (require('../playback-health').BufferedStart)(),
     document: {addEventListener(name, handler) { handlers[name] = handler; }},
     mediaElement: () => active, clearLoadWatch: () => cleared++, slog() {},
     tellSenders: message => sent.push(JSON.parse(JSON.stringify(message))),
     teardownEngine() {}, clearSteppingDown() {}, playbackHealth: {reset() {}},
   });
-  vm.runInContext(receiver.slice(start, end).replace(/  let loadWatch = null;[\s\S]*?window\.tvHelpers\.bufferPressure = clearLoadWatch;/, ''), context);
+  vm.runInContext(receiver.slice(start, end).replace(/  function clearLoadWatch[^\n]+/, ''), context);
   handlers.portagebufferpressure({composedPath: () => [active, {}]});
   assert.equal(cleared, 1); assert.deepEqual(sent, []);
   handlers.portagebufferfull({composedPath: () => [active, {}]});

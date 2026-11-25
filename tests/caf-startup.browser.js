@@ -29,6 +29,9 @@ test('CAF starts copied HLS and preserves encoded timestamps across rounded play
       path.join(fixture, 'media.m3u8'),
     ], {encoding: 'utf8', timeout: 15000});
     assert.equal(result.status, 0, String(result.error || result.stderr));
+    const flat = spawnSync(process.env.FFMPEG || 'ffmpeg', ['-v', 'error', '-i', path.join(fixture, 'media.m3u8'),
+      '-c', 'copy', '-movflags', '+faststart', path.join(fixture, 'clip.mp4')]);
+    assert.equal(flat.status, 0);
     const init = fs.readFileSync(path.join(fixture, 'init.mp4'));
     const avcC = init.indexOf(Buffer.from('avcC'));
     assert.ok(avcC > 0);
@@ -48,7 +51,7 @@ test('CAF starts copied HLS and preserves encoded timestamps across rounded play
         res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
         res.end('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000000,CODECS="' + codecs + '",RESOLUTION=320x180\nmedia.m3u8\n'); return;
       }
-      const media = /^\/(media\.m3u8|init\.mp4|segment-\d+\.m4s)$/.test(name);
+      const media = /^\/(media\.m3u8|clip\.mp4|init\.mp4|segment-\d+\.m4s)$/.test(name);
       const file = path.join(media ? fixture : root, name === '/' ? 'index.html' : name);
       if (!fs.existsSync(file)) {res.writeHead(404); res.end(); return;}
       let body = fs.readFileSync(file);
@@ -160,6 +163,23 @@ test('CAF starts copied HLS and preserves encoded timestamps across rounded play
       await page.waitForFunction(before => document.querySelector('cast-media-player').shadowRoot.querySelector('video').currentTime > before + 0.3,
         advisory.before, {timeout: 3000});
     }
+    await page.evaluate(() => {
+      const video = document.querySelector('cast-media-player').shadowRoot.querySelector('video');
+      const clock = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime');
+      Object.defineProperty(video, 'currentTime', {configurable: true, get: () => 0.117, set: v => clock.set.call(video, v)});
+      window.playbackCommands.length = 0;
+      cast.framework.CastReceiverContext.getInstance().getPlayerManager().load({
+        type: 'LOAD', requestId: 30, autoplay: true, currentTime: 0,
+        media: {contentId: location.origin + '/clip.mp4', contentType: 'video/mp4', streamType: 'BUFFERED',
+          customData: {videoStartID: 'original-video-test'}}});
+    });
+    await page.waitForFunction(() => window.advisories.some(m => m.type === 'videoStart'), null, {timeout: 25000});
+    assert.deepEqual(await page.evaluate(() => window.advisories.filter(m => m.type === 'videoStart')),
+      [{type: 'videoStart', load: 'original-video-test', state: 'stalled', position: 0.117}]);
+    assert.deepEqual(await page.evaluate(() => window.playbackCommands), ['load']);
+    await page.evaluate(() => { delete document.querySelector('cast-media-player').shadowRoot.querySelector('video').currentTime; });
+    await page.waitForFunction(() => window.advisories.some(m => m.type === 'videoStart' && m.state === 'playing'),
+      null, {timeout: 8000});
     assert.equal(playerRequests.length, 1, 'CAF loads the pinned player once, including across repeat LOAD');
     assert.ok(playerRequests[0].includes('/vendor/shaka/shaka-player.portage.js'));
     assert.ok(requests.includes('/master.m3u8'));
