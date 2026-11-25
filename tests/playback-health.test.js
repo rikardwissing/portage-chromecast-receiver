@@ -174,3 +174,27 @@ test('startup detection follows load/seek lifetime and ignores mid-playback stal
   healthy.tick(18, {advance: 0.5}); healthy.tick(60);
   assert.deepEqual(healthy.updates, []);
 });
+
+test('a stalled resume with only 2.7 seconds buffered offers once, then clears when playback starts', () => {
+  const t = startup(5.462);
+  t.ranges[0] = [0, 8.162];
+  t.video.seeking = true; t.tick(5);
+  t.video.seeking = false; t.tick(20);
+  assert.deepEqual(t.updates, []);
+  t.tick(4); t.tick(30);
+  assert.deepEqual(t.updates, [{load: 'load', state: 'stalled', position: 5.462}]);
+  t.tick(3, {advance: 0.5});
+  assert.equal(t.updates.at(-1).state, 'playing');
+});
+
+test('a short buffer still filling during a slow startup waits for playback', () => {
+  const t = startup();
+  t.ranges[0][1] = 2.1;
+  for (let i = 0; i < 45; i++) {
+    t.ranges[0][1] += 0.045;
+    t.tick(1);
+  }
+  assert.deepEqual(t.updates, []);
+  t.tick(4, {advance: 0.5}); t.tick(40);
+  assert.deepEqual(t.updates, []);
+});

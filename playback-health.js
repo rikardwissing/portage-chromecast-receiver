@@ -20,6 +20,7 @@
     interrupt() {
       this.previous = null;
       this.stillSince = null;
+      this.shortBufferEnd = null;
       this.advance = 0;
       this.movingSamples = 0;
     }
@@ -56,13 +57,27 @@
         this.reset();
         return result;
       }
-      if (!(video.videoWidth > 0 && video.readyState >= 2) || bufferAhead(video) < 5 ||
+      const ahead = bufferAhead(video);
+      if (!(video.videoWidth > 0 && video.readyState >= 2) || ahead < 2 ||
           Math.abs(pos - this.origin) > 0.25) {
         this.origin = pos;
         this.stillSince = null;
-      } else if (this.stillSince === null) {
-        this.stillSince = now;
-      } else if (!this.offered && now - this.stillSince >= 12) {
+        this.shortBufferEnd = null;
+        return null;
+      }
+      const short = ahead < 5;
+      if (short) {
+        const end = pos + ahead;
+        if (this.shortBufferEnd === null || Math.abs(end - this.shortBufferEnd) >= 0.25) {
+          this.shortBufferEnd = end;
+          this.stillSince = now;
+        }
+      } else {
+        if (this.shortBufferEnd !== null) this.stillSince = now;
+        this.shortBufferEnd = null;
+      }
+      if (this.stillSince === null) this.stillSince = now;
+      if (!this.offered && now - this.stillSince >= (short ? 20 : 12)) {
         this.offered = true;
         return {load: this.id, state: 'stalled', position: pos};
       }
