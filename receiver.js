@@ -821,6 +821,21 @@ if (window.MediaSource && MediaSource.prototype.addSourceBuffer && !MediaSource.
   MediaSource.prototype.__portageWatched = true;
 }
 
+let watchLines = null;
+function watchLayer() {
+  if (!watchLines && window.PortageWatchLines) {
+    watchLines = new window.PortageWatchLines.Layer({
+      blur: false,
+      video: () => {
+        const host = document.querySelector('cast-media-player');
+        const candidates = host && host.shadowRoot ? Array.from(host.shadowRoot.querySelectorAll('video')) : [];
+        return candidates.concat(Array.from(document.querySelectorAll('video'))).find(v => v.readyState >= 1 && v.videoWidth > 0) || null;
+      }
+    });
+  }
+  return watchLines;
+}
+
 // ---------------------------------------------------------------- CAF wiring
 
 if (!PREVIEW) {
@@ -1441,6 +1456,7 @@ if (!PREVIEW) {
     Report.end();
     teardownEngine();
     Subs.clear();
+    if (watchLines) watchLines.clear();
     return request;
   });
 
@@ -1554,6 +1570,9 @@ if (!PREVIEW) {
         contentId: Report.info ? Playing.contentId : null, title: Report.info ? Playing.title : null,
         position, items: Queue.items.map((item) => item.key), asking: !!Queue.asking,
       });
+    } else if (msg.type === 'together') {
+      const layer = watchLayer();
+      if (layer) layer.handle(msg);
     } else if (msg.type === 'setSubtitle') {
       Subs.select(typeof msg.typeIndex === 'number' ? msg.typeIndex : -1);
     } else if (msg.type === 'setAudioTrack' && engine) {
