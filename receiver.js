@@ -602,8 +602,10 @@ const Subs = {
   timer: null,
   pictureOverlay: null,
   textOverlay: null,
+  timelineShift: NaN,
   load(url, custom) {
     if (url !== this.key) { this.key = url; this.tracks = {}; }
+    this.timelineShift = Number(custom.timelineShift);
     this.engineToType = {};
     const list = (Array.isArray(custom.subtitles) ? custom.subtitles : []).concat(custom.pictureSubtitles || []);
     if (!this.textOverlay) this.textOverlay = new window.PortageSubtitleText.Layer({
@@ -621,6 +623,7 @@ const Subs = {
           return candidates.concat(Array.from(document.querySelectorAll('video'))).find(v => v.readyState >= 1 && v.videoWidth > 0) || null;
         },
         read: (url, kind) => fetch(url).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return kind === 'json' ? r.json() : r.blob(); }),
+        offset: () => this.pictureClock(),
         error: reason => tellSenders({ type: 'notice', reason })
       });
     }
@@ -635,6 +638,13 @@ const Subs = {
       if (sub.pictureBase) { track.pictureBase = sub.pictureBase; track.url = null; }
     }
     this.select(selected);
+  },
+  pictureClock() {
+    if (!isFinite(this.timelineShift)) return 0;
+    const videos = (window.__sourceBuffers || []).filter((entry) => entry.kind === 'video');
+    let applied = 0;
+    try { if (videos.length) applied = videos[videos.length - 1].buffer.timestampOffset || 0; } catch (e) {}
+    return -(applied + this.timelineShift);
   },
   clear() {
     if (this.pictureOverlay) this.pictureOverlay.clear();
