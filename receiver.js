@@ -1140,11 +1140,14 @@ if (!PREVIEW) {
       }
     }
     playbackHealth.tick();
+    heldByPressure();
   }, 1000);
   let bufferFullReported = false;
+  let pressureSince = null;
   let loadWatch = null;
   function clearLoadWatch() { if (loadWatch) { clearTimeout(loadWatch); loadWatch = null; } }
   function bufferPressure() {
+    if (pressureSince == null) pressureSince = Date.now();
     clearLoadWatch();
     if (bufferedStart.offered) tellSenders({type: 'videoStart', load: bufferedStart.id, state: 'cleared'});
     bufferedStart.reset();
@@ -1160,12 +1163,28 @@ if (!PREVIEW) {
     const path = event.composedPath ? event.composedPath() : [event.target];
     if (path.indexOf(mediaElement()) < 0) return;
     bufferPressure();
+    reportBufferFull('media buffer stayed full: retaining the stream and play/pause intent');
+  });
+  const reportBufferFull = function (why) {
     if (bufferFullReported) return;
     bufferFullReported = true;
-    slog('media buffer stayed full: retaining the stream and play/pause intent');
+    slog(why);
     tellSenders({ type: 'notice', code: 'bufferFull',
       reason: 'This receiver’s playback buffer is full. A lower video bitrate may help.' });
-  });
+  };
+  const heldByPressure = function () {
+    const element = mediaElement();
+    if (pressureSince == null || bufferFullReported || !element || !element.paused) return;
+    const now = element.currentTime;
+    let ahead = 0;
+    for (let i = 0; element.buffered && i < element.buffered.length; i++) {
+      if (element.buffered.start(i) <= now + 0.5 && element.buffered.end(i) > now) ahead = element.buffered.end(i) - now;
+    }
+    if (ahead > 0.5) { pressureSince = null; return; }
+    if (Date.now() - pressureSince >= 15000) {
+      reportBufferFull('media buffer stayed full while paused at ' + now.toFixed(1) + ': retaining the stream and play/pause intent');
+    }
+  };
   function armLoadWatch() {
     clearLoadWatch();
     loadWatch = setTimeout(() => {
@@ -1192,6 +1211,7 @@ if (!PREVIEW) {
   playerManager.setMessageInterceptor(messages.MessageType.LOAD, (request) => {
     teardownEngine();
     bufferFullReported = false;
+    pressureSince = null;
     playbackHealth.reset();
     clearSteppingDown();
     const media = request.media || {};
@@ -1493,8 +1513,24 @@ if (!PREVIEW) {
          (typeof stats.bufferAhead === 'number' ? stats.bufferAhead.toFixed(1) + 's' : '?') +
          ' download=' + rate + ' bitrate=' +
          (typeof stats.bitrate === 'number' ? (stats.bitrate / 1e6).toFixed(1) + 'Mbps' : '?') +
-         ' dropped=' + (stats.droppedFrames != null ? stats.droppedFrames : '?'));
+         ' dropped=' + (stats.droppedFrames != null ? stats.droppedFrames : '?') + bufferSummary());
   }, 15000);
+  const bufferSummary = function () {
+    const parts = [];
+    try {
+      const buffers = diagnosticMediaSource && diagnosticMediaSource.sourceBuffers;
+      for (let i = 0; buffers && i < buffers.length; i++) {
+        const mime = String(diagnosticBufferTypes.get(buffers[i]) || '');
+        const ops = diagnosticBufferOperations.get(buffers[i]) || {};
+        const errors = (ops.recent || []).filter((entry) => entry.operation === 'appendError');
+        const last = errors.length ? errors[errors.length - 1] : null;
+        parts.push((/^video/i.test(mime) ? 'video' : 'audio') + ' [' + rangesText(buffers[i].buffered) + '] appends=' +
+          (ops.appends || 0) + ' ' + ((ops.bytes || 0) / 1048576).toFixed(1) + 'MB quota=' + (ops.quota || 0) +
+          (last ? ' last=' + last.error + '@' + last.bytes : ''));
+      }
+    } catch (e) {}
+    return parts.length ? ' ' + parts.join(' ') : '';
+  };
   playerManager.addEventListener(events.EventType.PLAYING, () => {
     Queue.playing();
     if (loadAudioCodec && !audioCheck) audioCheck = setTimeout(checkAudioPlays, 4000);

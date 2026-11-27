@@ -55,3 +55,50 @@ test('CAF owns loading the vendored player so its readiness promise can settle',
   assert.equal(options.shakaUrl, 'https://receiver.example/subdirectory/vendor/shaka/shaka-player.portage.js?v=2026-11-20.9');
   assert.equal(options.shakaVersion, '4.16.45');
 });
+
+test('refused appends behind a held pause still surface the bitrate suggestion', () => {
+  const handlers = {}, sent = [];
+  let clock = 1000;
+  const empty = {length: 0, start() { return 0; }, end() { return 0; }};
+  const active = {paused: true, currentTime: 1455.6, buffered: empty};
+  const start = receiver.indexOf('  let bufferFullReported = false;');
+  const end = receiver.indexOf('  function armLoadWatch()', start);
+  const context = vm.createContext({
+    window: {tvHelpers: {}}, bufferedStart: new (require('../playback-health').BufferedStart)(),
+    document: {addEventListener(name, handler) { handlers[name] = handler; }},
+    mediaElement: () => active, clearLoadWatch() {}, slog() {},
+    tellSenders: message => sent.push(JSON.parse(JSON.stringify(message))),
+    Date: {now: () => clock},
+  });
+  vm.runInContext(receiver.slice(start, end).replace(/  function clearLoadWatch[^\n]+/, '') +
+    '\nthis.heldByPressure = heldByPressure;', context);
+  context.heldByPressure();
+  assert.equal(sent.length, 0, 'no pressure, no notice');
+  handlers.portagebufferpressure({target: active});
+  clock += 14000; context.heldByPressure();
+  assert.equal(sent.length, 0);
+  clock += 1000; context.heldByPressure();
+  assert.deepEqual(sent.map(m => m.code), ['bufferFull']);
+  clock += 30000; context.heldByPressure();
+  assert.equal(sent.length, 1, 'one suggestion per load');
+});
+
+test('a pause with media ahead is an ordinary pause', () => {
+  const handlers = {}, sent = [];
+  let clock = 1000;
+  const ahead = {length: 1, start() { return 1450; }, end() { return 1470; }};
+  const active = {paused: true, currentTime: 1455.6, buffered: ahead};
+  const start = receiver.indexOf('  let bufferFullReported = false;');
+  const end = receiver.indexOf('  function armLoadWatch()', start);
+  const context = vm.createContext({
+    window: {tvHelpers: {}}, bufferedStart: new (require('../playback-health').BufferedStart)(),
+    document: {addEventListener(name, handler) { handlers[name] = handler; }},
+    mediaElement: () => active, clearLoadWatch() {}, slog() {},
+    tellSenders: message => sent.push(message), Date: {now: () => clock},
+  });
+  vm.runInContext(receiver.slice(start, end).replace(/  function clearLoadWatch[^\n]+/, '') +
+    '\nthis.heldByPressure = heldByPressure;', context);
+  handlers.portagebufferpressure({target: active});
+  clock += 60000; context.heldByPressure();
+  assert.equal(sent.length, 0);
+});
